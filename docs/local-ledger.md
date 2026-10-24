@@ -111,8 +111,9 @@ cannot be referenced by public records under the existing schema validation.
 - Pending/corrected events and events with conflicting fields appear in the
   queue, unless the current revision rejects the event. Rejection is event-level:
   it carries every fact (including corrected or conflicting ones) forward
-  unchanged and cannot be combined with a fact correction. Acceptance needs resolved kind, positive amount, event date, and known
-  account, plus all existing schema integrity checks. Conflicting or explicitly
+  unchanged and cannot be combined with a fact correction. Acceptance needs
+  resolved kind, positive amount, event date, and known account, plus all
+  existing schema integrity checks. Conflicting or explicitly
   rejected facts must be resolved before accepting. Optional unknowns can remain
   visible after acceptance; acceptance is not a claim that every field is known
   or verified. Rejection preserves history, rather than deleting the event.
