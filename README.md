@@ -39,8 +39,10 @@ After `uv sync --locked`, start the loopback-only service:
 uv run --locked spending-optimiser
 ```
 
-Open **http://127.0.0.1:8765**, click **Import bundled synthetic example**, and open
-**Review queue** to inspect evidence and correct/review the purchase. No credentials,
+Open **http://127.0.0.1:8765** to see your workspace overview. **Mail inbox** guides
+Gmail setup and explicit loading. For an offline walkthrough, choose **Import data**,
+click **Import bundled synthetic example**, then open **Review queue** to inspect
+evidence and correct/review the purchase. No credentials,
 real financial data, model, or Internet access are needed after dependency installation.
 Ledger refresh rereads the local database. Gmail has separate Connect and Load/Refresh mail actions; sign-in never loads mail automatically.
 
@@ -61,7 +63,21 @@ Live Gmail and actual bank-notification compatibility have **not** been verified
 The app implements consent, refresh and native-only credential storage; the standalone
 adapter still does not read/change stores. Follow the setup guide to import your
 Desktop client JSON privately with `--configure-google`, then start the app and
-choose **Connect Gmail / load mail**. No credentials are needed for offline imports.
+choose **Mail inbox > Connect Gmail**. No credentials are needed for offline imports.
+
+## Safe synthetic UI preview
+
+```sh
+uv run --locked python examples/ui_preview.py --port 8876
+```
+
+Open **http://127.0.0.1:8876**. This runs the actual UI against a fresh disposable
+database, in-memory fake credential store, local synthetic consent page and fake
+Gmail transport. It never reads your normal ledger or OS credentials and makes no
+Google requests. Every screen is labeled synthetic. Use `--unconfigured` to inspect
+the setup-required state or `--populated` for the bundled ledger example. Connect,
+approve synthetic consent, then Load mail for four fictional candidates, including
+long text. Ctrl-C removes the temporary database. Port 8765 is explicitly refused.
 
 ## Technical direction
 

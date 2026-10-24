@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+{% from 'components.html' import transactions_table, import_notice %}
+{% block content %}
+<div class="page-head"><div><p class="eyebrow">A LITTLE CLARITY, EVERY DAY</p><h1>Your workspace, at a glance.</h1><p class="muted">Connect your inbox. Keep evidence close. Review every financial event with confidence.</p></div><span class="badge">Private workspace</span></div>
+{{ import_notice(added, unchanged) }}
+{% if not gmail.connection %}
+<section class="hero card" aria-labelledby="welcome-heading">
+<div><p class="eyebrow">START WITH YOUR INBOX</p><h2 id="welcome-heading">A clearer view starts<br>with a connection.</h2><p>Bring recent Gmail notifications into one quiet place. You choose when to load mail, and what to review. Your inbox stays separate from your ledger.</p><div class="actions"><a class="button" href="/gmail">Set up Gmail <span aria-hidden="true">↗</span></a><a class="button quiet" href="/imports">Explore the offline example</a></div><p class="small" style="margin:16px 0 0">Read-only access · Secure OS credential storage · No automatic mail loading</p></div>
+<div class="hero-aside"><div class="step"><span class="step-number">1</span><div><strong>Connect securely</strong><p>One-time Google setup, then consent on Google's page.</p></div></div><div class="step"><span class="step-number">2</span><div><strong>Load on your terms</strong><p>Choose a recent range and a bounded message limit.</p></div></div><div class="step"><span class="step-number">3</span><div><strong>Keep the distinction</strong><p>Mail is evidence to inspect, not an accepted transaction.</p></div></div></div>
+</section>
+{% else %}
+<section class="hero card"><div><p class="eyebrow">YOUR INBOX IS CONNECTED</p><h2>Connected.<br>You're in control.</h2><p class="text-wrap">{{ gmail.connection.email }}</p><p>Load a recent batch when you're ready. Mail is never loaded in the background or added to your spending automatically.</p><a class="button" href="/gmail">Open mail inbox <span aria-hidden="true">↗</span></a></div><div class="hero-aside"><div class="step"><span class="step-number">✓</span><div><strong>Read-only connection</strong><p>The app cannot send, delete or modify your mail.</p></div></div><div class="step"><span class="step-number">↻</span><div><strong>Explicit refresh</strong><p>The latest batch stays in memory only. Restart clears mail, not your ledger.</p></div></div></div></section>
+{% endif %}
+<section class="stats" aria-label="Workspace counts">
+<div class="card stat"><span class="label">Ledger events</span><p class="value">{{ transactions|length }}</p><a href="/ledger">View transactions ↗</a></div>
+<div class="card stat"><span class="label">Need review</span><p class="value">{{ review_count }}</p><a href="/review">Open review queue ↗</a></div>
+<div class="card stat"><span class="label">Mail candidates</span><p class="value">{{ gmail.candidates|length }}</p><a href="/gmail">Not ledger transactions ↗</a></div>
+</section>
+<div class="split">
+<section class="card table-card"><div class="section-heading"><div><h2>Ledger snapshot</h2><p>{{ revision_count }} historical transaction revision{{ '' if revision_count == 1 else 's' }} preserved.</p></div><a href="/ledger">View all</a></div>
+{% if transactions %}{{ transactions_table(transactions[:5]) }}{% else %}<div class="empty"><span class="empty-icon" aria-hidden="true">≡</span><h3>A clean starting point.</h3><p>0 results. No ledger events yet. Gmail candidates won't appear here automatically. Import a validated document or try the clearly labeled synthetic example.</p><a class="button secondary" href="/imports">Explore offline data</a></div>{% endif %}</section>
+<section class="card"><p class="eyebrow">KNOW WHAT YOU'RE SEEING</p><h2>Evidence first.<br>Assumptions never.</h2><p class="muted small">Your ledger preserves imported events, source evidence and every correction. Review decisions never erase the original.</p><p class="muted small">This workspace doesn't yet extract mail into transactions or calculate balances, budgets or rewards.</p><a class="inline-link" href="/review">Go to review queue ↗</a></section>
+</div>
+{% endblock %}

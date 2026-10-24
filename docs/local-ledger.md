@@ -44,8 +44,8 @@ material, credentials, screenshots containing financial data, or exports.
 
 ## Complete synthetic browser workflow
 
-1. On **Ledger**, click **Import bundled synthetic example**. This imports the
-   exact synthetic schema fixture bundled with the package. Alternatively, upload
+1. From the **Overview**, open **Import data** and click **Import bundled synthetic
+   example**. This imports the exact synthetic schema fixture bundled with the package. Alternatively, upload
    `tests/fixtures/synthetic.json` using **Import a schema document**. Both paths
    run the same validation and persistence code. Paste JSON or upload a file, not
    both; the complete request must fit within 2 MiB including form overhead.
@@ -56,8 +56,9 @@ material, credentials, screenshots containing financial data, or exports.
 3. Open **Review queue**, then **test-purchase**. Inspect per-field uncertainty,
    evidence locators, the private synthetic observation, and the original history.
    Unknown posting date, merchant, MCC, and other optional values are not inferred.
-4. Enter a reviewer and reason. Choose `merchant` and paste the following complete
-   replacement Fact JSON:
+4. Choose **Review this event**, enter a reviewer and reason, and expand **Correct
+   a fact (optional, advanced JSON)**. Choose `merchant` and paste the following
+   complete replacement Fact JSON:
 
    ```json
    {"status":"proposed","value":"Synthetic cafe"}
@@ -71,16 +72,34 @@ material, credentials, screenshots containing financial data, or exports.
 5. On the refreshed detail page, enter a reviewer and reason again, leave the
    correction field and JSON empty, select **Accept resolved event**, and submit.
    Expect a third review revision and **0 results** in the review queue.
-6. Return to Ledger and reimport the bundled example. Expect **0 new records**,
+6. Return to **Import data** and reimport the bundled example. Expect **0 new records**,
    **11 unchanged records**, one canonical event, and the manual merchant still
    present. Stop and restart the service with the same database path; all three
    transaction revisions and the accepted head remain.
 
-**Ledger / refresh local data** rereads SQLite. It never pretends to fetch Gmail.
-The separate **Public card evidence** view excludes private accounts,
+**Transactions > Refresh local data** rereads SQLite. It never pretends to fetch Gmail.
+The separate **Card evidence** view excludes private accounts,
 observations, transaction quotes, and correction histories. Public evidence
 referenced by a transaction is visible in its detail, while private observations
 cannot be referenced by public records under the existing schema validation.
+
+## Workspace navigation
+
+- **Overview**: actual event, review and temporary mail counts, a ledger snapshot,
+  and a clear next step. No financial totals or demo metrics are prefilled.
+- **Mail inbox**: one-time setup guidance, Connect/Restore, explicit bounded
+  Load/Refresh, readable candidate details and connection settings/disconnect.
+  Mail stays separate from ledger events.
+- **Transactions**: all canonical ledger events, including accepted/rejected ones.
+  Open an event for facts, source evidence, review/correction and immutable history.
+- **Review queue**: events needing a decision. Reviewer, reason and action are
+  primary; complete Fact JSON correction is available in an optional disclosure.
+- **Import data** and **Card evidence**: advanced snapshot import and public
+  reference data, separate from the main onboarding journey.
+
+The interface uses local system fonts, server-rendered semantic forms, visible
+keyboard focus and responsive layouts without scripts, remote assets or a frontend
+build. See the README's disposable synthetic preview for safe UI exploration.
 
 ## Persistence and review contract
 

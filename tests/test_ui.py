@@ -1,0 +1,169 @@
+"""Rendered application contracts and real form journeys with synthetic dependencies."""
+
+import importlib.util
+from html.parser import HTMLParser
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+import pytest
+from fastapi.testclient import TestClient
+
+from spending_optimiser.gmail_auth import NativeStore
+from spending_optimiser.web import create_app
+
+# Load the standalone, documented preview entry point without a production dependency.
+SPEC = importlib.util.spec_from_file_location(
+    "ui_preview", Path(__file__).parents[1] / "examples" / "ui_preview.py"
+)
+PREVIEW = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(PREVIEW)
+
+
+class Page(HTMLParser):
+    """Parse the rendered HTML interface, not implementation source."""
+
+    def __init__(self, text):
+        super().__init__()
+        self.elements = []
+        self.feed(text)
+
+    def handle_starttag(self, tag, attrs):
+        self.elements.append((tag, dict(attrs)))
+
+    def attrs(self, tag, **attrs):
+        return [
+            a
+            for t, a in self.elements
+            if t == tag and all(k in a and a[k] == v for k, v in attrs.items())
+        ]
+
+
+@pytest.fixture(autouse=True)
+def forbid_native_store(monkeypatch):
+    def forbidden(*args):
+        raise AssertionError("The UI must not inspect native credentials on page views")
+
+    monkeypatch.setattr(NativeStore, "_backend", forbidden)
+
+
+def post(client, path, **data):
+    client.get("/")
+    return client.post(path, data={"csrf": client.cookies["ledger_csrf"], **data})
+
+
+def connect(client):
+    response = post(client, "/gmail/connect")
+    url = Page(response.text).attrs("a", rel="noreferrer")[0]["href"]
+    state = parse_qs(urlparse(url).query)["state"][0]
+    return client.get("/gmail/callback", params={"state": state, "code": "synthetic"})
+
+
+def test_first_run_navigation_is_useful_offline_and_never_reads_credentials(tmp_path):
+    client = TestClient(create_app(tmp_path / "offline.sqlite3"), base_url="http://127.0.0.1:8876")
+    response = client.get("/")
+    page = Page(response.text)
+    assert response.status_code == 200
+    assert page.attrs("a", href="/gmail")
+    assert page.attrs("a", href="/", **{"aria-current": "page"})
+    assert page.attrs("main", id="main", tabindex="-1")
+    assert not page.attrs("form")  # Advanced imports are not the first-run experience.
+    for path in ("/ledger", "/review", "/gmail", "/imports", "/public"):
+        response = client.get(path)
+        page = Page(response.text)
+        assert response.status_code == 200
+        assert len(page.attrs("h1")) == 1
+        assert page.attrs("a", href=path, **{"aria-current": "page"})
+        assert not any(page.attrs(tag) for tag in ("script", "iframe", "img", "link"))
+        assert "default-src 'none'" in response.headers["content-security-policy"]
+    assert "0 results" in client.get("/ledger").text
+    imports = Page(client.get("/imports").text)
+    assert {f["action"] for f in imports.attrs("form")} == {"/import", "/example"}
+
+
+def test_configuration_required_opens_actionable_setup_and_preserves_offline_use(tmp_path):
+    app = PREVIEW.preview_app(tmp_path, configured=False)
+    client = TestClient(app, base_url="http://127.0.0.1:8876")
+    response = post(client, "/gmail/connect")
+    page = Page(response.text)
+    assert response.status_code == 200
+    assert page.attrs("div", role="alert")
+    assert page.attrs("details", open=None)
+    assert "Google client not configured" in response.text
+    assert "--configure-google &lt; /absolute/private/path/client.json" in response.text
+    assert "Check setup &amp; connect Gmail" in response.text
+    assert not page.attrs("input", type="password")
+    assert "11 new records" in post(client, "/example").text
+    assert len(app.state.ledger.load().transactions) == 1
+
+
+def test_mail_journey_readable_headers_limits_and_no_ledger_side_effects(tmp_path):
+    app = PREVIEW.preview_app(tmp_path)
+    client = TestClient(app, base_url="http://127.0.0.1:8876")
+    response = connect(client)
+    assert "alex.preview@example.invalid" in response.text
+    assert "No mail fetched" in response.text
+    assert not app.state.gmail.candidates
+    response = post(
+        client, "/gmail/load", days="30", limit="5", connection_id=app.state.gmail.connection_id
+    )
+    page = Page(response.text)
+    assert len(page.attrs("details", **{"class": "mail-item"})) == 4
+    assert "Orchard Preview &lt;notifications@example.invalid&gt;" in response.text
+    assert "01 Feb 2025" in response.text
+    assert "Display truncated to 10,000 characters" in response.text
+    assert not page.attrs("img") and not page.attrs("script")
+    assert page.attrs("input", name="limit", value="5")
+    assert page.attrs("option", value="30", selected=None)
+    assert not app.state.ledger.load().transactions
+    assert (
+        "4 refreshed"
+        in post(
+            client, "/gmail/load", days="30", limit="5", connection_id=app.state.gmail.connection_id
+        ).text
+    )
+    assert "alex.preview@example.invalid" in client.get("/").text
+    response = post(client, "/gmail/disconnect")
+    assert "disconnected locally" in response.text
+    assert "alex.preview@example.invalid" not in response.text
+    assert not app.state.gmail.candidates
+    assert "No saved connection" in post(client, "/gmail/restore").text
+
+
+def test_redesigned_ledger_review_history_and_duplicate_safe_import(tmp_path):
+    app = PREVIEW.preview_app(tmp_path)
+    client = TestClient(app, base_url="http://127.0.0.1:8876")
+    assert "11 new records" in post(client, "/example").text
+    assert "1 need review" in client.get("/ledger").text
+    page = Page(client.get("/ledger").text)
+    event_url = next(a["href"] for a in page.attrs("a") if a["href"].startswith("/transaction?"))
+    response = client.get(event_url)
+    page = Page(response.text)
+    assert {a["href"] for a in page.attrs("a")}.issuperset(
+        {"#facts", "#source-evidence", "#review-event", "#history"}
+    )
+    controls = page.attrs("input") + page.attrs("select") + page.attrs("textarea")
+    labels = {a["for"] for a in page.attrs("label")}
+    assert all(a.get("id") in labels for a in controls if a.get("type") != "hidden")
+    response = post(
+        client,
+        "/review",
+        revision_id="test-purchase-v1",
+        actor="Preview reviewer",
+        reason="Checked synthetic evidence",
+        status="accepted",
+        field="merchant",
+        fact_json='{"status":"proposed","value":"Synthetic cafe"}',
+    )
+    assert response.status_code == 200
+    assert "2 revisions preserved" in response.text
+    assert "Preview reviewer" in response.text
+    assert "0 results" in client.get("/review").text
+    assert "Synthetic cafe" in client.get("/ledger").text
+    assert "0 new records" in post(client, "/example").text
+    restarted = TestClient(
+        create_app(tmp_path / "synthetic.sqlite3"), base_url="http://127.0.0.1:8876"
+    )
+    assert "Synthetic cafe" in restarted.get(event_url).text
+    response = client.get("/transaction?event_id=missing")
+    assert response.status_code == 404
+    assert Page(response.text).attrs("div", role="alert")

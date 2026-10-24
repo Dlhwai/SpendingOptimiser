@@ -209,8 +209,11 @@ Unlike Google's quickstart example, this app does **not** write `token.json`.
 uv run --locked spending-optimiser
 ```
 
-1. Open **http://127.0.0.1:8765**, then **Connect Gmail / load mail**. With a custom
-   `--port`, use that port consistently; do not substitute `localhost` for sign-in.
+1. Open **http://127.0.0.1:8765**, then **Mail inbox**. The overview also has a
+   **Set up Gmail** shortcut. Expand **One-time Google setup** for the concise
+   local configuration checklist; a missing-client response opens it automatically.
+   With a custom `--port`, use that port consistently; do not substitute `localhost`
+   for sign-in.
 2. Choose **Connect Gmail**, then **Continue to Google**. Sign in and consent only
    on Google's page in the same browser profile. The app never collects a Gmail
    password. The attempt expires after 10 minutes; a new attempt replaces the old
@@ -228,7 +231,8 @@ uv run --locked spending-optimiser
    limit, and explicit partial/API failures. **0 candidates** after success is
    distinct from failed/incomplete loading. No whole-mailbox scan, scheduler,
    background polling or automatic retry exists.
-5. Expand a candidate to view unverified headers, Gmail receipt time and escaped
+5. Candidate rows show sender, subject and Gmail receipt time. Expand a row to
+   view the complete subject, unverified headers and escaped
    normalized text. HTML is never executed, images never loaded, URLs never
    followed and embedded instructions never acted upon. Display is capped at
    10,000 characters per candidate with a size notice. Candidates are not parsed
@@ -237,7 +241,8 @@ uv run --locked spending-optimiser
    deduplicates by account/message identity. On partial failure, successful
    candidates remain visible and errors are explicit; retry starts a fresh scan,
    not a checkpoint that silently skips failed IDs. This is not a snapshot sync.
-7. **Disconnect Gmail / forget saved authorization** clears in-memory mail,
+7. Under **Connection settings & privacy**, **Disconnect Gmail / forget saved
+   authorization** clears in-memory mail,
    cancels pending sign-ins and deletes this database's refresh authorization from
    the OS store. It is idempotent. If deletion fails, the UI is disconnected but
    explicitly reports that the saved credential could remain; unlock and retry.
@@ -283,7 +288,10 @@ state/session/host/expiry/replay, nonce/scope rejection, secure-store errors,
 account switches/disconnect/restart, pagination/duplicates/range limits,
 0/partial/API failures, escaped content and unchanged offline ledger data.
 The synthetic Chrome walkthrough uses an injected mock consent page and fake
-transport/store, not real Google sign-in or OS entries.
+transport/store, not real Google sign-in or OS entries. Reproduce it with
+`uv run --locked python examples/ui_preview.py --port 8876`; see the README.
+The UI additionally tests navigation, configuration-required guidance, candidate
+headers/truncation, selected range/limit, offline imports and the review journey.
 
 **Still requires the user:** perform Cloud/client setup above, approve native
 credential-store access, complete explicit Google browser consent, verify one

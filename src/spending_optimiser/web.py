@@ -166,6 +166,10 @@ def create_app(database: str | Path | None = None, *, gmail_service=None) -> Fas
             message = str(exc)
         return render(request, "error.html", status_code=code, message=message)
 
+    @app.exception_handler(HTTPException)
+    async def request_error(request, exc):
+        return render(request, "error.html", status_code=exc.status_code, message=exc.detail)
+
     @app.exception_handler(sqlite3.Error)
     async def storage_error(request, exc):
         return render(
@@ -260,14 +264,31 @@ def create_app(database: str | Path | None = None, *, gmail_service=None) -> Fas
         transactions = heads(document)
         return render(
             request,
-            "ledger.html",
+            "overview.html",
             transactions=transactions,
             review_count=sum(needs_review(t) for t in transactions),
             revision_count=len(document.transactions),
             added=request.query_params.get("added"),
             unchanged=request.query_params.get("unchanged"),
+            gmail=gmail,
+        )
+
+    @app.get("/ledger", response_class=HTMLResponse)
+    async def ledger_page(request: Request):
+        document = ledger.load()
+        transactions = heads(document)
+        return render(
+            request,
+            "ledger.html",
+            transactions=transactions,
+            review_count=sum(needs_review(t) for t in transactions),
+            revision_count=len(document.transactions),
             review_only=False,
         )
+
+    @app.get("/imports", response_class=HTMLResponse)
+    async def imports_page(request: Request):
+        return render(request, "imports.html")
 
     @app.get("/review", response_class=HTMLResponse)
     async def queue(request: Request):

@@ -29,6 +29,8 @@ class GmailService:
         self.connection = None
         self.connection_id = secrets.token_urlsafe(24)
         self.candidates = {}
+        self.load_days = 7
+        self.load_limit = 20
         self.notice = (
             "Disconnected. Connect Gmail or restore your saved connection; "
             "mail loads only on request."
@@ -132,6 +134,7 @@ class GmailService:
             or not 1 <= limit <= 100
         ):
             raise ValueError("Choose 1, 7 or 30 recent days and a message limit from 1 to 100")
+        self.load_days, self.load_limit = days, limit
         connection = self.connection
         namespace = "google-" + hashlib.sha256(connection.subject.encode()).hexdigest()
         adapter = GmailAdapter(self.client_factory(self), namespace)
