@@ -83,7 +83,7 @@ Unambiguous, validated records can be accepted automatically. Ambiguous or incom
 
 - One local executable/service with a browser dashboard and manual transaction refresh.
 - Modular monolith: domain calculations, application use cases, infrastructure adapters, web UI, and CLI. Reusable service boundaries do not initially require separate deployments.
-- Suggested stack: Python, FastAPI, Pydantic, SQLite with SQLAlchemy/Alembic, and Jinja2/HTMX. Python/Pydantic domain schemas are implemented; the other components remain architectural recommendations, not installed dependencies.
+- Suggested stack: Python, FastAPI, Pydantic, SQLite with SQLAlchemy/Alembic, and Jinja2/HTMX. Python/Pydantic domain schemas and a bounded, fixture-tested notification extraction use case are implemented; the service/storage/UI components remain architectural recommendations, not installed dependencies.
 - Deterministic reward and budget calculations consume validated, versioned data. AI researches documents and proposes extractions; it is not the financial source of truth.
 - Store source evidence and audit history. Monthly totals are rebuildable projections, not the only retained records.
 - Use durable job state for Gmail refresh, adaptive extraction, onboarding, and daily news/term checks.
@@ -106,7 +106,9 @@ Unambiguous, validated records can be accepted automatically. Ambiguous or incom
 
 The foundational schema milestone is implemented as the importable `spending_optimiser` Python package with Pydantic validation, a pinned uv development/test setup, synthetic fixtures, automated tests and CI. It represents transaction/source/revision identities, purchase/refund/reversal/income/transfer events, personal accounts/cards separately from public products, per-field uncertainty and evidence, native rewards separately from redemption/valuation, and historical rule/evidence revisions. See [schema usage and limitations](docs/schemas.md).
 
-There is no runnable application, financial calculation engine, persistence, Gmail integration, scheduler, or researched card-rule catalog. Schema validation is not a complete bank ledger or a rule-publication gate. The three named cards remain unverified supplied labels.
+A [constrained extraction use case](docs/extraction.md) now accepts notification data independently of Gmail, uses one injected model callable with a bounded span-selection contract, and returns existing pending-review transaction proposals. Deterministic validation covers a small labelled fixture grammar, not qualified real-bank formats or general-language model accuracy. Synthetic fixtures and fake clients require no live provider or privacy choice; private content is blocked from the callable without explicit per-call opt-in.
+
+There is no runnable application, live model client, financial calculation engine, persistence, Gmail integration, scheduler, or researched card-rule catalog. Schema validation is not a complete bank ledger or a rule-publication gate. The three named cards remain unverified supplied labels.
 
 Suggested build order:
 
@@ -116,4 +118,4 @@ Suggested build order:
 4. Add daily MileLion/official-term monitoring and policy-gated rule publication.
 5. Expand reconciliation, promotion tracking, reminders, and planned-spend recommendations.
 
-Later integration milestones may need sanitized notification examples, personal approval/enrollment and campaign details, budget/savings assumptions, and the transaction-extraction model/privacy choice. None is required for the schema-only milestone.
+Later integration milestones may need sanitized notification examples, personal approval/enrollment and campaign details, budget/savings assumptions, and the transaction-extraction model/privacy choice. None is required for the schema or synthetic extraction milestones.
