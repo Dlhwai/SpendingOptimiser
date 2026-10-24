@@ -1,0 +1,424 @@
+"""Synthetic-only saved month, ledger projection and rendered chart contracts."""
+
+import base64
+import importlib.util
+import sqlite3
+from datetime import UTC, date, datetime
+from html.parser import HTMLParser
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+from google.oauth2.credentials import Credentials
+
+from spending_optimiser.document import SchemaDocument
+from spending_optimiser.gmail import ClientFailure, IngestionError
+from spending_optimiser.gmail_auth import GoogleConnection, NativeStore
+from spending_optimiser.gmail_service import GmailService
+from spending_optimiser.monthly import calendar_month, format_money, monthly_report
+from spending_optimiser.web import create_app
+
+SPEC = importlib.util.spec_from_file_location(
+    "monthly_fixture", Path(__file__).parents[1] / "examples" / "monthly_fixture.py"
+)
+FIXTURE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(FIXTURE)
+
+
+@pytest.fixture(autouse=True)
+def no_network_or_native_credentials(monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Only disposable synthetic stores and transports allowed")
+
+    monkeypatch.setattr(NativeStore, "_backend", forbidden)
+    monkeypatch.setattr("urllib.request.OpenerDirector.open", forbidden)
+    monkeypatch.setattr("requests.sessions.Session.request", forbidden)
+
+
+class MemoryStore:
+    def get(self, key):
+        return None
+
+    def put(self, key, value):
+        pass
+
+    def delete(self, key):
+        pass
+
+
+class FakeMail:
+    def __init__(self):
+        self.pages = {None: {}}
+        self.calls = []
+        self.failed = None
+        self.body = "Synthetic <script>alert(1)</script> <img src=https://tracking.invalid>"
+        self.receipts = {}
+
+    def list_messages(self, **kwargs):
+        self.calls.append(("list", kwargs))
+        page = self.pages[kwargs["page_token"]]
+        if isinstance(page, Exception):
+            raise page
+        return page
+
+    def get_message(self, identity):
+        self.calls.append(("get", identity))
+        if identity == self.failed:
+            raise ClientFailure(IngestionError("rate_limited", True, 429))
+        raw = self.body.encode()
+        return {
+            "id": identity,
+            "threadId": "same-thread",
+            "internalDate": self.receipts.get(identity, "1738368000000"),
+            "payload": {
+                "mimeType": "text/plain",
+                "headers": [{"name": "Subject", "value": identity}],
+                "body": {"size": len(raw), "data": base64.urlsafe_b64encode(raw).decode()},
+            },
+        }
+
+
+def connected(path, fake=None, subject="account-A"):
+    fake = fake or FakeMail()
+    service = GmailService(path, store=MemoryStore(), client_factory=lambda _: fake)
+    service.connection = GoogleConnection(
+        subject, f"{subject}@example.invalid", Credentials("fake")
+    )
+    return service, fake
+
+
+def load(service, pages=1, month="2025-02", action="continue"):
+    service.load_month(month, pages, service.connection_id, action)
+    return service.saved_month(calendar_month(month))
+
+
+def test_half_open_month_boundaries_and_query_timezone():
+    feb = calendar_month("2024-02")
+    assert (feb.start, feb.end) == (date(2024, 2, 1), date(2024, 3, 1))
+    assert calendar_month("2025-12").end == date(2026, 1, 1)
+    assert calendar_month("2025-02").query == "after:1738367999 before:1740787200"
+
+
+@pytest.mark.parametrize(
+    "value", ["2025-2", "2025-00", "2025-13", "2025-02-01", "", "all", "9999-12", "1969-12"]
+)
+def test_invalid_months(value):
+    with pytest.raises(ValueError):
+        calendar_month(value)
+
+
+def test_empty_partial_full_pagination_duplicate_refresh_restart_and_account_isolation(tmp_path):
+    path = tmp_path / "synthetic.sqlite3"
+    service, fake = connected(path)
+    month = calendar_month("2025-02")
+    assert service.saved_month(month)[1]["started"] is False
+    candidates, state = load(service)
+    assert candidates == {} and state["exhausted"] and state["pages"] == 1
+    calls = len(fake.calls)
+    load(service)
+    assert len(fake.calls) == calls  # exhausted Continue is idempotent, not new loading
+    fake.pages = {
+        None: {"messages": [{"id": "a"}, {"id": "a"}], "nextPageToken": "second"},
+        "second": {"nextPageToken": "third"},  # empty nonterminal page is NOT exhausted
+        "third": {"messages": [{"id": "a"}, {"id": "b"}]},
+    }
+    candidates, state = load(service, action="refresh")
+    assert set(candidates) == {"a"} and not state["exhausted"]
+    assert state["duplicates"] == 1
+    restarted, _ = connected(path, fake)
+    assert set(restarted.saved_month(month)[0]) == {"a"}
+    candidates, state = load(restarted)
+    assert not state["exhausted"] and state["token"] == "third"
+    candidates, state = load(restarted)
+    assert set(candidates) == {"a", "b"} and state["exhausted"]
+    assert state["duplicates"] == 2
+    load(restarted, pages=3, action="refresh")
+    with restarted.cache.ledger.connection() as db:
+        assert db.execute("SELECT count(*) FROM mail_versions").fetchone()[0] == 2
+    other, _ = connected(path, fake, subject="account-B")
+    assert other.saved_month(month)[0] == {}
+    load(other, pages=3)
+    assert set(other.saved_month(month)[0]) == {"a", "b"}
+    assert other.namespace != restarted.namespace
+    restarted.disconnect()
+    assert restarted.saved_month(month) == ({}, None)
+    back, _ = connected(path, fake)
+    assert set(back.saved_month(month)[0]) == {"a", "b"}
+    assert back.cache.ledger.load().transactions == ()  # raw mail never becomes facts
+
+
+def test_failed_page_is_retried_without_skipping_successes_or_reporting_full(tmp_path):
+    service, fake = connected(tmp_path / "test.sqlite3")
+    fake.pages = {
+        None: {"messages": [{"id": "a"}, {"id": "b"}], "nextPageToken": "second"},
+        "second": {},
+    }
+    fake.failed = "b"
+    candidates, state = load(service, pages=5)
+    assert set(candidates) == {"a"} and state["token"] is None
+    assert not state["exhausted"] and state["errors"] == ["rate_limited"]
+    fake.failed = None
+    candidates, state = load(service, pages=2)
+    assert set(candidates) == {"a", "b"} and state["exhausted"]
+    assert len([call for call in fake.calls if call == ("get", "a")]) == 1
+    fake.pages = {None: ClientFailure(IngestionError("transport_failed", True))}
+    candidates, state = load(service, action="refresh")
+    assert set(candidates) == {"a", "b"} and not state["exhausted"]
+    assert state["errors"] == ["transport_failed"]
+
+
+def test_bounds_cycles_expired_tokens_and_mail_versions(tmp_path):
+    service, fake = connected(tmp_path / "test.sqlite3")
+    fake.pages = {
+        None: {"messages": [{"id": "a"}], "nextPageToken": "second"},
+        "second": {"nextPageToken": "third"},
+        "third": {"nextPageToken": "second"},
+    }
+    _, state = load(service, pages=5)
+    assert not state["exhausted"] and "pagination_cycle" in state["errors"][0]
+    fake.pages = {None: {"messages": [{"id": "a"}]}}
+    original = service.saved_month(calendar_month("2025-02"))[0]["a"].text
+    fake.body = "Changed synthetic message"
+    load(service, action="refresh")
+    assert service.saved_month(calendar_month("2025-02"))[0]["a"].text == fake.body
+    fake.body = original
+    load(service, action="refresh")
+    assert service.saved_month(calendar_month("2025-02"))[0]["a"].text == original
+    with service.cache.ledger.connection() as db:
+        assert db.execute("SELECT count(*) FROM mail_versions").fetchone()[0] == 2
+    for pages in (0, 6, True):
+        with pytest.raises(ValueError):
+            load(service, pages=pages)
+    fake.pages = {
+        None: {"nextPageToken": "expired"},
+        "expired": ClientFailure(IngestionError("api_error")),
+    }
+    _, state = load(service, pages=2, action="refresh")
+    assert state["token"] == "expired" and not state["exhausted"]
+    fake.pages = {None: {}}
+    assert load(service, action="refresh")[1]["exhausted"]
+
+
+def test_five_page_action_bound_and_atomic_save_on_storage_failure(tmp_path):
+    service, fake = connected(tmp_path / "test.sqlite3")
+    fake.pages = {
+        None: {"nextPageToken": "1"},
+        **{str(i): {"nextPageToken": str(i + 1)} for i in range(1, 8)},
+    }
+    _, state = load(service, pages=5)
+    assert state["pages"] == 5 and state["token"] == "5" and not state["exhausted"]
+    assert len(fake.calls) == 5
+    fake.pages = {None: {"messages": [{"id": "new"}]}}
+    with service.cache.ledger.connection() as db:
+        db.execute(
+            "CREATE TRIGGER fail_scan BEFORE UPDATE ON mail_scans "
+            "BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END"
+        )
+    with pytest.raises(sqlite3.Error):
+        load(service, action="refresh")
+    assert service.saved_month(calendar_month("2025-02"))[0] == {}
+    assert service.saved_month(calendar_month("2025-02"))[1]["token"] == "5"
+    with service.cache.ledger.connection() as db:
+        assert db.execute("SELECT count(*) FROM mail_versions").fetchone()[0] == 0
+
+
+def test_utc_receipt_boundaries_and_distinct_month_checkpoints(tmp_path):
+    service, fake = connected(tmp_path / "test.sqlite3")
+    timestamps = {
+        "before": datetime(2025, 1, 31, 23, 59, 59, 999000, UTC),
+        "start": datetime(2025, 2, 1, tzinfo=UTC),
+        "last": datetime(2025, 2, 28, 23, 59, 59, 999000, UTC),
+        "end": datetime(2025, 3, 1, tzinfo=UTC),
+    }
+    fake.pages = {None: {"messages": [{"id": key} for key in timestamps]}}
+    fake.receipts = {key: str(int(value.timestamp() * 1000)) for key, value in timestamps.items()}
+    candidates, state = load(service)
+    assert set(candidates) == {"start", "last"} and state["exhausted"]
+    assert not service.saved_month(calendar_month("2025-03"))[1]["started"]
+
+
+def test_month_projection_canonical_correction_exclusions_unknowns_and_kind_semantics():
+    doc = FIXTURE.monthly_document()
+    report = monthly_report(doc, calendar_month("2025-02"))
+    assert len(report["rows"]) == 15 and len(report["undated"]) == 1
+    assert report["counts"] == {"accepted": 12, "pending": 2, "rejected": 1}
+    assert report["excluded"] == {"Pending / uncertain": 2, "Rejected": 1, "Explicit duplicate": 1}
+    charts = {chart["currency"]: chart for chart in report["charts"]}
+    assert charts["SGD"]["totals"] == {
+        "purchase": 15880,
+        "refund": 500,
+        "reversal": 100,
+        "income": 250000,
+        "transfer": 9999,
+    }
+    assert sorted(r["minor_units"] for r in charts["SGD"]["groups"]) == [1450, 6230, 8200]
+    assert [(r["label"], r["minor_units"]) for r in charts["SGD"]["daily"]] == [
+        ("2025-02-01", 1280),
+        ("2025-02-08", 13150),
+        ("2025-02-28", 1450),
+    ]
+    assert charts["JPY"]["totals"]["purchase"] == 1234
+    assert charts["KWD"]["totals"]["purchase"] == 1234
+    assert charts["USD"]["totals"]["purchase"] == 1299
+    assert any(
+        "Avenue unknown" in row["label"] and "Card unassigned" in row["label"]
+        for row in charts["SGD"]["groups"]
+    )
+    for chart in charts.values():
+        assert sum(row["minor_units"] for row in chart["groups"]) == chart["totals"]["purchase"]
+        assert sum(row["minor_units"] for row in chart["daily"]) == chart["totals"]["purchase"]
+    assert not monthly_report(doc, calendar_month("2024-02"))["rows"]
+    assert len(monthly_report(doc, calendar_month("2025-01"))["rows"]) == 1
+    assert len(monthly_report(doc, calendar_month("2025-03"))["rows"]) == 1
+
+
+def test_manual_date_correction_moves_only_the_canonical_head_between_months(tmp_path):
+    service, fake = connected(tmp_path / "test.sqlite3")
+    ledger = service.cache.ledger
+    ledger.import_document(FIXTURE.monthly_document().model_dump_json())
+    before = monthly_report(ledger.load(), calendar_month("2025-02"))
+    ledger.review(
+        "weekly-groceries-v2",
+        actor="Synthetic reviewer",
+        reason="Synthetic date correction",
+        status="accepted",
+        field="occurred_on",
+        fact_json='{"status":"proposed","value":"2025-03-01"}',
+    )
+    after = monthly_report(ledger.load(), calendar_month("2025-02"))
+    march = monthly_report(ledger.load(), calendar_month("2025-03"))
+
+    def sgd(report):
+        return next(c for c in report["charts"] if c["currency"] == "SGD")
+
+    assert sgd(after)["totals"]["purchase"] == sgd(before)["totals"]["purchase"] - 4950
+    assert sum(r["transaction"].event_id == "weekly-groceries" for r in march["rows"]) == 1
+    preserved = ledger.load()
+    load(service)
+    assert ledger.load() == preserved and fake.calls  # loading raw mail cannot change facts
+
+
+def test_unknown_account_and_conflicting_or_rejected_fact_do_not_inflate_totals():
+    data = FIXTURE.monthly_document().model_dump(mode="json")
+    t = data["transactions"][0]
+    t["review"]["status"] = "pending"
+    t["account_id"] = {"status": "unknown"}
+    t.pop("card_id")
+    second = data["transactions"][1]
+    second["channel"] = {
+        "status": "conflicting",
+        "alternatives": ["card", "paynow"],
+        "note": "Synthetic conflict",
+    }
+    data["transactions"][2]["channel"] = second["channel"]
+    data["transactions"][3]["amount"]["review"] = {
+        "status": "rejected",
+        "reviewer": "Test",
+        "reason": "No support",
+        "reviewed_at": "2025-04-01T00:01:00Z",
+    }
+    report = monthly_report(SchemaDocument.model_validate(data), calendar_month("2025-02"))
+    assert "Account unassigned" in report["rows"][1]["group"] or any(
+        "Account unassigned" in r["group"] for r in report["rows"]
+    )
+    assert report["excluded"]["Unresolved / rejected fact"] == 2
+    assert next(c for c in report["charts"] if c["currency"] == "SGD")["totals"]["purchase"] == 1450
+
+
+@pytest.mark.parametrize(
+    "currency,amount,expected",
+    [
+        ("SGD", 1234, "SGD 12.34"),
+        ("JPY", 1234, "JPY 1,234"),
+        ("KWD", 1234, "KWD 1.234"),
+        ("BHD", 1, "BHD 0.001"),
+        ("USD", 2**63 - 1, "USD 92,233,720,368,547,758.07"),
+    ],
+)
+def test_exact_integer_display(currency, amount, expected):
+    assert format_money(currency, amount) == expected
+
+
+class TableData(HTMLParser):
+    def __init__(self, text):
+        super().__init__()
+        self.chart = None
+        self.charts = {}
+        self.rows = []
+        self.feed(text)
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag == "figure":
+            self.chart = (a["data-currency"], a["data-chart"])
+            self.charts[self.chart] = 0
+        if tag == "tr" and "data-event" in a:
+            self.rows.append(a)
+        elif tag == "tr" and "data-minor" in a and self.chart:
+            self.charts[self.chart] += int(a["data-minor"])
+
+    def handle_endtag(self, tag):
+        if tag == "figure":
+            self.chart = None
+
+
+def test_actual_gets_are_offline_and_chart_tables_exactly_agree_with_monthly_rows(tmp_path):
+    service, fake = connected(tmp_path / "test.sqlite3")
+    app = create_app(tmp_path / "test.sqlite3", gmail_service=service)
+    app.state.ledger.import_document(FIXTURE.monthly_document().model_dump_json())
+    client = TestClient(app, base_url="http://127.0.0.1:8877")
+    for path in ("/?month=2025-02", "/gmail?month=2025-02", "/ledger", "/review"):
+        assert client.get(path).status_code == 200
+    assert fake.calls == []
+    filtered = client.get("/ledger?month=2025-02")
+    assert filtered.status_code == 200 and "15 events" in filtered.text
+    assert "previous-month" not in filtered.text and "next-month" not in filtered.text
+    assert "paynow" in filtered.text and "SGD 49.50" in filtered.text
+    assert client.get("/ledger?month=all").status_code == 422
+    response = client.get("/?month=2025-02")
+    data = TableData(response.text)
+    assert len(data.rows) == 15
+    assert "Gmail retrieval for this month is incomplete" in response.text
+    assert "not integrated" in response.text and "1 undated" in response.text
+    for currency in ("SGD", "JPY", "KWD", "USD"):
+        total = sum(
+            int(r["data-minor"])
+            for r in data.rows
+            if r["data-included"] == "yes"
+            and r["data-kind"] == "purchase"
+            and r["data-currency"] == currency
+        )
+        assert data.charts[currency, "groups"] == data.charts[currency, "daily"] == total
+    assert "0 results" in client.get("/?month=2024-02").text
+    assert client.get("/?month=all").status_code == 422
+    assert client.post("/gmail/month", data={"month": "2025-02", "pages": "1"}).status_code == 403
+    csrf = client.cookies["ledger_csrf"]
+    fields = {
+        "csrf": csrf,
+        "month": "2025-02",
+        "pages": "1",
+        "action": "continue",
+        "connection_id": service.connection_id,
+    }
+    response = client.post("/gmail/month", data=fields)
+    assert response.status_code == 200 and "Query exhausted" in response.text
+    assert "0 results saved" in response.text
+    assert "Query exhausted" in client.get("/?month=2025-02").text
+    assert 'href="/gmail?month=2025-02"' in client.get("/?month=2025-02").text
+    other_month = client.get("/gmail?month=2025-03").text
+    assert "Not loaded" in other_month and "Query exhausted" not in other_month
+    assert (
+        client.post(
+            "/gmail/month", data=fields, headers={"Origin": "https://evil.invalid"}
+        ).status_code
+        == 403
+    )
+    service.clear()
+    assert "account-A@example.invalid" not in client.get("/gmail?month=2025-02").text
+    assert client.post("/gmail/month", data=fields).status_code == 200
+    assert fake.calls == [
+        (
+            "list",
+            {"query": "after:1738367999 before:1740787200", "page_token": None, "page_size": 20},
+        )
+    ]

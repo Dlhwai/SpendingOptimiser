@@ -1,12 +1,15 @@
-"""One local account, bounded in-memory candidates, no financial extraction/acceptance."""
+"""One local account, explicit bounded month scans and saved mail. No extraction/AI."""
 
 import hashlib
 import secrets
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from .gmail import AuthenticationFailure, GmailAdapter, GmailRestClient
 from .gmail_auth import GmailProblem, GoogleOAuth, NativeStore, client_config
+from .mail_cache import MailCache
+from .monthly import calendar_month
 
 
 @dataclass(repr=False)
@@ -25,10 +28,12 @@ class GmailService:
         self.client_factory = client_factory if client_factory is not None else GmailRestClient
         self.clock = clock if clock is not None else time.monotonic
         self.key = "connection-" + hashlib.sha256(str(database).encode()).hexdigest()
+        self.cache = MailCache(database)
         self.pending = {}
         self.connection = None
         self.connection_id = secrets.token_urlsafe(24)
         self.candidates = {}
+        self.notice_month = None
         self.load_days = 7
         self.load_limit = 20
         self.notice = (
@@ -47,7 +52,8 @@ class GmailService:
         self.connection = None
         self.candidates = {}
         self.connection_id = secrets.token_urlsafe(24)
-        self.notice = "Disconnected. Temporary mail cleared; no mail loads automatically."
+        self.notice_month = None
+        self.notice = "Disconnected. Mail hidden; saved mail remains on this device."
 
     def begin(self, session, redirect):
         config = self.config()
@@ -86,7 +92,7 @@ class GmailService:
         self.pending.clear()  # another tab cannot replace the newly selected account
         self.connection = connection
         self.problem = None
-        self.notice = "Connected. No mail fetched. Choose a recent range and Load mail."
+        self.notice = "Connected. No mail fetched. Choose a calendar month and Load month."
 
     def restore(self):
         config = self.config()
@@ -122,6 +128,92 @@ class GmailService:
             self.clear()
             raise AuthenticationFailure() from None
 
+    @property
+    def namespace(self):
+        if self.connection is None:
+            return None
+        return "google-" + hashlib.sha256(self.connection.subject.encode()).hexdigest()
+
+    def saved_month(self, month):
+        namespace = self.namespace
+        if namespace is None:
+            return {}, None
+        return self.cache.candidates(namespace, month), self.cache.state(namespace, month)
+
+    def load_month(self, key, pages, connection_id, action):
+        month = calendar_month(key)
+        if self.connection is None or not secrets.compare_digest(
+            connection_id.encode(), self.connection_id.encode()
+        ):
+            raise GmailProblem("reconnect")
+        if type(pages) is not int or not 1 <= pages <= 5 or action not in {"continue", "refresh"}:
+            raise ValueError("Choose 1-5 pages and Continue or Refresh")
+        connection, namespace = self.connection, self.namespace
+        state = self.cache.state(namespace, month)
+        if action == "refresh":
+            state = {
+                "started": False,
+                "exhausted": False,
+                "token": None,
+                "tokens": [],
+                "seen": [],
+                "pages": 0,
+                "duplicates": 0,
+                "errors": [],
+            }
+        self.notice_month = month.key
+        if state["exhausted"]:
+            self.notice = "Month query already exhausted. Refresh month to check for new mail."
+            return
+        adapter = GmailAdapter(self.client_factory(self), namespace)
+        self.problem = None
+        for _ in range(pages):
+            page = adapter.fetch_page(
+                query=month.query, page_token=state["token"], page_size=20, seen_ids=state["seen"]
+            )
+            state["started"] = True
+            state["checked_at"] = datetime.now(UTC).isoformat(timespec="seconds")
+            state["pages"] += 1
+            state["duplicates"] += page.duplicate_count
+            errors = [page.error.code] if page.error else []
+            found = []
+            for result in page.results:
+                if result.candidate is not None:
+                    found.append(result.candidate)
+                    state["seen"].append(result.message_id)
+                else:
+                    errors.append(result.error.code)
+            if connection is not self.connection or any(
+                code in {"authentication_failed", "refresh_failed"} for code in errors
+            ):
+                self.clear()
+                raise GmailProblem("reconnect")
+            state["errors"] = sorted(set(errors))
+            if page.successful:
+                token = page.next_page_token
+                if token is not None and token in state["tokens"]:
+                    state["errors"] = ["pagination_cycle; refresh month to restart"]
+                else:
+                    if token is not None:
+                        state["tokens"].append(token)
+                    state["token"] = token
+                    state["exhausted"] = page.exhausted
+            # Persist successes plus the unadvanced checkpoint on a failed page.
+            # Explicit Continue retries that page, skipping only successful IDs.
+            self.cache.save(namespace, month, state, found)
+            if state["errors"] or state["exhausted"]:
+                break
+        count = len(self.cache.candidates(namespace, month))
+        self.notice = (
+            f"{count} saved candidates for {month.label}; {state['pages']} pages examined; "
+            f"{state['duplicates']} duplicate IDs skipped. "
+            + (
+                "Query exhausted, not proof of complete financial coverage."
+                if state["exhausted"]
+                else "Incomplete month. Continue loading or retry; totals are saved ledger only."
+            )
+        )
+
     def load(self, days, limit, connection_id):
         if self.connection is None or not secrets.compare_digest(
             connection_id.encode(), self.connection_id.encode()
@@ -134,6 +226,7 @@ class GmailService:
             or not 1 <= limit <= 100
         ):
             raise ValueError("Choose 1, 7 or 30 recent days and a message limit from 1 to 100")
+        self.notice_month = "recent"
         self.load_days, self.load_limit = days, limit
         connection = self.connection
         namespace = "google-" + hashlib.sha256(connection.subject.encode()).hexdigest()

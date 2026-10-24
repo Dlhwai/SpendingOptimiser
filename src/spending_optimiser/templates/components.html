@@ -1,9 +1,10 @@
-{% macro transactions_table(transactions) %}
-<table class="data-table responsive-table"><caption class="muted small" style="text-align:left;padding-bottom:16px">Notification events, not reconciled bank postings. Amounts are magnitudes in integer minor units.</caption><thead><tr><th scope="col">Event / merchant</th><th scope="col">Kind / event date</th><th scope="col">Amount magnitude</th><th scope="col">Review</th></tr></thead><tbody>
+{% macro transactions_table(transactions, groups=none) %}
+<table class="data-table responsive-table"><caption class="muted small" style="text-align:left;padding-bottom:16px">Notification events, not reconciled bank postings. Amounts are magnitudes in integer minor units.</caption><thead><tr><th scope="col">Event / merchant</th><th scope="col">Kind / event date</th>{% if groups %}<th scope="col">Card / account / avenue</th>{% endif %}<th scope="col">Amount magnitude</th><th scope="col">Review</th></tr></thead><tbody>
 {% for t in transactions %}<tr>
 <td data-label="Event / merchant"><a href="{{ '/transaction?event_id=' ~ (t.event_id|urlencode) }}">{{ t.merchant.value or t.event_id }}</a>{% if t.merchant.value %}<small>{{ t.event_id }}</small>{% endif %}{% if t.duplicate_of %}<small>Explicit duplicate of {{ t.duplicate_of }}</small>{% endif %}</td>
 <td data-label="Kind / event date">{{ t.kind.value or t.kind.status }}<small>{{ t.occurred_on.value or t.occurred_on.status }}</small></td>
-<td data-label="Amount magnitude"><span class="amount">{% if t.amount.value %}{{ t.amount.value.currency }} {{ t.amount.value.minor_units }} minor units{% else %}{{ t.amount.status }}{% endif %}</span><small>{{ t.amount.status }}; not a signed bank posting</small></td>
+{% if groups %}<td data-label="Card / account / avenue">{{ groups[t.event_id] }}</td>{% endif %}
+<td data-label="Amount magnitude"><span class="amount">{% if t.amount.value %}{{ money(t.amount.value.currency, t.amount.value.minor_units) }}{% else %}{{ t.amount.status }}{% endif %}</span><small>{{ t.amount.status }}; not a signed bank posting</small></td>
 <td data-label="Review"><span class="badge {{ t.review.status }}">{{ t.review.status|replace('_',' ') }}</span></td>
 </tr>{% endfor %}</tbody></table>
 {% endmacro %}

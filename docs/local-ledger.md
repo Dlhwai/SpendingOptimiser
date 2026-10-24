@@ -85,11 +85,12 @@ cannot be referenced by public records under the existing schema validation.
 
 ## Workspace navigation
 
-- **Overview**: actual event, review and temporary mail counts, a ledger snapshot,
-  and a clear next step. No financial totals or demo metrics are prefilled.
-- **Mail inbox**: one-time setup guidance, Connect/Restore, explicit bounded
-  Load/Refresh, readable candidate details and connection settings/disconnect.
-  Mail stays separate from ledger events.
+- **Overview**: calendar-month canonical transactions, decision counts, separate
+  currency/kind magnitudes, purchase grouping and daily charts, with exclusions.
+  All data comes from saved records, never page-triggered retrieval or AI.
+- **Mail inbox**: one-time setup guidance, Connect/Restore, explicit bounded month
+  Load/Continue/Refresh, persistent account-scoped candidates and retrieval state.
+  Mail stays separate from ledger events. See [monthly workflow](monthly.md).
 - **Transactions**: all canonical ledger events, including accepted/rejected ones.
   Open an event for facts, source evidence, review/correction and immutable history.
 - **Review queue**: events needing a decision. Reviewer, reason and action are
@@ -159,7 +160,7 @@ Uploaded bodies are bounded to 2 MiB. There is no model integration or transacti
 telemetry. Tests and smoke validation use only synthetic material.
 
 There is no multi-user login, encryption at rest, retention/deletion UI, migrations beyond
-local database format 1, automatic backups, pagination, or production hosting
+local database format 1, automatic backups, ledger-table pagination, or production hosting
 support. Do not expose the service through a proxy, LAN bind, or tunnel; the local
 OS user and other software on the machine remain trusted. All database readers
 can see private material. For a backup, stop the service and copy the database
@@ -168,7 +169,8 @@ financial source data. Large histories are loaded as one document, so this
 milestone is intended for small local ledgers, not high-volume workloads.
 
 Evidence checks establish links and chronology, not the truth of a quote or a
-reviewer's financial interpretation. No statement balancing, adaptive extraction,
+reviewer's financial interpretation. Deterministic monthly saved-data projections are documented in [monthly.md](monthly.md).
+No statement balancing, adaptive extraction,
 AI calls, scheduling, monthly budget, reward engine, or researched card terms are
 implemented here. Gmail OAuth and read-only candidate loading are a separate
 implemented feature, documented in [gmail.md](gmail.md). Later integration still needs sanitized bank

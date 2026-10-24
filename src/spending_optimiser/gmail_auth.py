@@ -46,7 +46,8 @@ MESSAGES = {
         "no automatic consent or mail loading occurs."
     ),
     "disconnected": (
-        "Gmail disconnected locally; loaded mail cleared. To revoke the Google grant too, "
+        "Gmail disconnected locally; mail hidden, saved mail remains on this device. "
+        "To revoke the Google grant too, "
         "remove this app in your Google Account connections."
     ),
     "no_saved_connection": "No saved connection. Choose Connect Gmail.",

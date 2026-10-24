@@ -66,7 +66,8 @@ def test_first_run_navigation_is_useful_offline_and_never_reads_credentials(tmp_
     assert page.attrs("a", href="/gmail")
     assert page.attrs("a", href="/", **{"aria-current": "page"})
     assert page.attrs("main", id="main", tabindex="-1")
-    assert not page.attrs("form")  # Advanced imports are not the first-run experience.
+    assert page.attrs("form") == [{"class": "month-picker", "action": "/", "method": "get"}]
+    # The only primary form reads saved month data; imports stay secondary.
     for path in ("/ledger", "/review", "/gmail", "/imports", "/public"):
         response = client.get(path)
         page = Page(response.text)

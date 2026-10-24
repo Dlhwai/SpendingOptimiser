@@ -227,25 +227,30 @@ uv run --locked spending-optimiser
    address changes do not merge identities. No extra profile/email scopes are
    needed. A namespace hashes that `sub`; message identities also include the
    Gmail message ID, never the thread or financial amount.
-4. Choose last **1, 7 or 30 days** and a limit of **1-100 messages**, then **Load
-   mail**. The query is fixed to `newer_than:Nd`, excluding spam/trash. At most five
-   pages of up to 20 IDs are examined, counting duplicate IDs against the limit.
-   The result reports candidates, refreshes, duplicates, exhaustion or a loading
-   limit, and explicit partial/API failures. **0 candidates** after success is
-   distinct from failed/incomplete loading. No whole-mailbox scan, scheduler,
-   background polling or automatic retry exists.
+4. Select a **calendar month**, then **View saved month** to read local data only.
+   Choose **1-5 pages per action** (default 2, 20 IDs/page) and **Load month**.
+   The fixed query uses explicit UTC epoch boundaries, excluding spam/trash;
+   a local half-open receipt-time filter enforces the exact month. Duplicates
+   count toward the action bound. **Continue / retry month** resumes until the
+   query is genuinely exhausted, including successful empty nonterminal pages.
+   Partial failures retain successes and retry the same unadvanced page with
+   only successful IDs skipped. Errors and cycles stay incomplete, never empty
+   success. Refresh restarts an expired/cycled token. No automatic retries,
+   whole-mailbox scans, scheduler or background polling exist. See [monthly.md](monthly.md).
 5. Candidate rows show sender, subject and Gmail receipt time. Expand a row to
    view the complete subject, unverified headers and escaped
    normalized text. HTML is never executed, images never loaded, URLs never
    followed and embedded instructions never acted upon. Display is capped at
    10,000 characters per candidate with a size notice. Candidates are not parsed
    or added to the ledger and do not change review decisions or financial facts.
-6. **Refresh mail** repeats the bounded query, replaces the temporary batch and
-   deduplicates by account/message identity. On partial failure, successful
-   candidates remain visible and errors are explicit; retry starts a fresh scan,
-   not a checkpoint that silently skips failed IDs. This is not a snapshot sync.
+6. **Refresh month** restarts this month's query with bounded pages, retaining
+   saved candidates and deduplicating by stable account/message identity. Changed
+   content versions are preserved. Continue until exhausted again; previous
+   exhaustion is not current after refresh starts. Absent/deleted provider mail
+   is not erased from saved data. This is not a snapshot or financial completeness
+   guarantee. The last query-action time and page/duplicate counts are visible.
 7. Under **Connection settings & privacy**, **Disconnect Gmail / forget saved
-   authorization** clears in-memory mail,
+   authorization** hides saved mail and clears the legacy in-memory batch,
    cancels pending sign-ins and deletes this database's refresh authorization from
    the OS store. It is idempotent. If deletion fails, the UI is disconnected but
    explicitly reports that the saved credential could remain; unlock and retry.
@@ -262,19 +267,25 @@ Existing Strict form-CSRF, Origin, Host, CSP and loopback protections remain.
 Callback codes/errors are never rendered and immediately redirect to `/gmail`
 without query parameters and with no-referrer. Access logging is disabled.
 
-Access/ID tokens and the latest bounded candidate batch live only in process
-memory, never SQLite or files. Refresh tokens and client secrets live only in the
-native store under service `spending-optimiser.gmail`. The client entry is shared
-by this OS app; saved authorization is keyed by the absolute ledger-path digest.
-There is no ledger schema/storage migration and offline imports/reviews survive
-upgrade unchanged. **No persistent mail cache is implemented.** Restart clears
-mail and browser sessions, and does not access the credential store or network.
-Use **Restore saved connection** after restarting to read the native store (no
-network/mail yet); loading then refreshes and verifies authorization. Revoked or
-expired refresh/API authentication clears visible mail and asks you to reconnect.
-Other API/permission/rate-limit failures are explicit, not silent empty success.
-Switching accounts immediately hides the prior batch; stale account forms cannot
-load into a newly selected connection.
+Access/ID tokens live only in process memory. Refresh tokens and client secrets
+remain only in the native store under service `spending-optimiser.gmail`. The
+client entry is shared by this OS app; saved authorization is keyed by the
+absolute ledger-path digest. **Monthly mail and checkpoints now persist as private
+plaintext SQLite data**, scoped by stable Google identity, including source
+versions and successful-ID/page-token continuation. Additive mail tables do not
+rewrite existing ledger records or change ledger format 1. Protect disk/backups;
+there is no encryption at rest or retention/deletion UI. Disconnect does not
+remove the local cache or ledger history, only visible access and authorization.
+
+Restart hides mail and clears browser sessions, without accessing the credential
+store or network. Use **Restore saved connection** to read the native store and
+view only that identity's saved mail (no network/mail retrieval yet). Loading then
+refreshes/verifies authorization. Revoked or expired refresh/API authentication
+hides mail and asks you to reconnect. Other API/permission/rate-limit failures are
+explicit, not empty success. Switching accounts hides the prior cache; stale
+account forms cannot load into a newly selected connection. The legacy bounded
+recent-load endpoint remains compatible with its separate temporary-batch view,
+but is not the primary path.
 
 This remains a single-user, loopback-only local app. The OS user/other local
 software are trusted; memory, browser history, OS-store access and backups still
@@ -299,6 +310,7 @@ headers/truncation, selected range/limit, offline imports and the review journey
 **Still requires the user:** perform Cloud/client setup above, approve native
 credential-store access, complete explicit Google browser consent, verify one
 small recent-message load, refresh, restart/restore and disconnect with the real
-account. No live-account smoke verification or qualified real-bank extraction is
+account. Also verify month continuation and persisted saved mail after restore.
+No live-account smoke verification or qualified real-bank extraction is
 claimed. Keep any real mail/screenshots outside Git and chat. Missing credentials
 do not prevent the implemented offline tests or offline ledger workflow.
