@@ -186,6 +186,7 @@ class Candidate:
     headers: tuple[Header, ...] = field(repr=False)
     parts: tuple[TextPart, ...] = field(repr=False)
     subject: str | None = field(repr=False)
+    sender: str | None = field(repr=False)  # untrusted From claim, None if absent/ambiguous
     warnings: tuple[str, ...] = ()
 
     @property
@@ -285,6 +286,10 @@ class GmailAdapter:
             warnings = []
             if len(subjects) > 1:
                 warnings.append("ambiguous_subject")
+            senders = [h.value for h in normalized_headers if h.name == "from"]
+            sender = decoded_header(senders[0]) if len(senders) == 1 else None
+            if len(senders) > 1:
+                warnings.append("ambiguous_sender")
             dates = [h.value for h in normalized_headers if h.name == "date"]
             sent_at = None
             if dates:
@@ -320,6 +325,7 @@ class GmailAdapter:
                     normalized_headers,
                     parts,
                     subject,
+                    sender,
                     tuple(warnings),
                 ),
             )

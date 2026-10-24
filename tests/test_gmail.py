@@ -358,8 +358,12 @@ def test_duplicate_headers_are_preserved_without_authenticity_claims():
     )
     result = adapter(FakeClient(messages={"m1": msg})).get_candidate("m1").candidate
     assert len([h for h in result.headers if h.name == "from"]) == 2
-    assert result.sent_at is None and result.subject is None
-    assert set(result.warnings) == {"ambiguous_subject", "invalid_or_ambiguous_sent_date"}
+    assert result.sent_at is None and result.subject is None and result.sender is None
+    assert set(result.warnings) == {
+        "ambiguous_subject",
+        "ambiguous_sender",
+        "invalid_or_ambiguous_sent_date",
+    }
 
 
 def test_changed_content_keeps_identity_but_changes_evidence_digest():

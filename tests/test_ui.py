@@ -108,7 +108,9 @@ def test_mail_journey_readable_headers_limits_and_no_ledger_side_effects(tmp_pat
     )
     page = Page(response.text)
     assert len(page.attrs("details", **{"class": "mail-item"})) == 4
-    assert "Orchard Preview &lt;notifications@example.invalid&gt;" in response.text
+    assert (
+        "Unverified sender: Orchard Preview &lt;notifications@example.invalid&gt;" in response.text
+    )
     assert "01 Feb 2025" in response.text
     assert "Display truncated to 10,000 characters" in response.text
     assert not page.attrs("img") and not page.attrs("script")
@@ -166,4 +168,40 @@ def test_redesigned_ledger_review_history_and_duplicate_safe_import(tmp_path):
     assert "Synthetic cafe" in restarted.get(event_url).text
     response = client.get("/transaction?event_id=missing")
     assert response.status_code == 404
+    assert Page(response.text).attrs("div", role="alert")
+
+
+def test_mail_sender_is_decoded_unambiguous_and_marked_unverified(tmp_path, monkeypatch):
+    original = PREVIEW.PreviewTransport.get_json
+
+    def get_json(self, url, headers):
+        message = original(self, url, headers)
+        if message.get("id") == "preview-1":
+            message["payload"]["headers"].append(
+                {"name": "From", "value": "Other claim <x@evil.example.invalid>"}
+            )
+        if message.get("id") == "preview-2":
+            for header in message["payload"]["headers"]:
+                if header["name"] == "From":
+                    header["value"] = "=?UTF-8?B?QmFuayDinJM=?= <n@bank.example.invalid>"
+        return message
+
+    monkeypatch.setattr(PREVIEW.PreviewTransport, "get_json", get_json)
+    app = PREVIEW.preview_app(tmp_path)
+    client = TestClient(app, base_url="http://127.0.0.1:8876")
+    connect(client)
+    response = post(
+        client, "/gmail/load", days="30", limit="5", connection_id=app.state.gmail.connection_id
+    )
+    assert "Unverified sender: Unknown/ambiguous" in response.text
+    assert "notifications@example.invalid&gt;Other claim" not in response.text
+    assert "ambiguous_sender" in response.text
+    assert "Unverified sender: Bank \u2713 &lt;n@bank.example.invalid&gt;" in response.text
+
+
+def test_rendered_errors_preserve_exception_headers(tmp_path):
+    client = TestClient(create_app(tmp_path / "offline.sqlite3"), base_url="http://127.0.0.1:8876")
+    response = client.get("/gmail/load")
+    assert response.status_code == 405
+    assert response.headers["allow"] == "POST"
     assert Page(response.text).attrs("div", role="alert")

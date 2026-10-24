@@ -168,7 +168,9 @@ def create_app(database: str | Path | None = None, *, gmail_service=None) -> Fas
 
     @app.exception_handler(HTTPException)
     async def request_error(request, exc):
-        return render(request, "error.html", status_code=exc.status_code, message=exc.detail)
+        response = render(request, "error.html", status_code=exc.status_code, message=exc.detail)
+        response.headers.update(exc.headers or {})
+        return response
 
     @app.exception_handler(sqlite3.Error)
     async def storage_error(request, exc):
