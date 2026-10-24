@@ -110,9 +110,9 @@ A [constrained extraction use case](docs/extraction.md) now accepts notification
 
 A runnable offline local service now imports validated schema documents atomically into SQLite, shows the persisted event ledger and evidence, and records immutable review/correction revisions. Duplicate reimports are harmless; conflicts fail explicitly, and imports cannot overwrite local manual revisions. The bundled synthetic example exercises the whole path without credentials or an external model. See [setup, synthetic walkthrough, guarantees and limitations](docs/local-ledger.md).
 
-A separate offline-tested, read-only Gmail candidate adapter lists and retrieves notification candidates without creating transactions; live Gmail access still requires authorization. See [Gmail usage, privacy and limits](docs/gmail.md).
+The read-only Gmail adapter is now wired to Google Desktop OAuth sign-in and explicit bounded recent-mail loading in the local browser app. Native-only OS credential storage, refresh, account identity/isolation and disconnect are implemented; candidates stay in temporary process memory and never become ledger transactions. Production library exchange/refresh and retrieval are synthetic end-to-end tested. Live-account consent/loading still require the user's Cloud configuration and explicit Google consent and have not been verified. See [Gmail setup, usage, privacy and limits](docs/gmail.md).
 
-There is no live model client, financial calculation engine, live or ledger-wired Gmail integration, qualified bank-email parser, scheduler, or researched card-rule catalog in this milestone. The event ledger is not complete bank reconciliation or a rule-publication gate. The three named cards remain unverified supplied labels.
+There is no live model client, financial calculation engine, qualified bank-email parser, mail-to-ledger extraction, scheduler, or researched card-rule catalog in this milestone. The event ledger is not complete bank reconciliation or a rule-publication gate. The three named cards remain unverified supplied labels.
 
 Suggested build order:
 

@@ -1,4 +1,4 @@
-"""Offline, loopback-only browser application. No fetching or model integrations."""
+"""Loopback-only ledger and explicit read-only Gmail loading. No model integrations."""
 
 import argparse
 import hmac
@@ -6,6 +6,8 @@ import json
 import os
 import secrets
 import sqlite3
+import sys
+import threading
 from importlib.resources import files
 from pathlib import Path
 from urllib.parse import urlencode
@@ -15,12 +17,16 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException
+from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .common import EvidenceRef
 from .document import walk
+from .gmail_auth import MESSAGES, GmailProblem, NativeStore, configure_google
+from .gmail_service import GmailService
 from .ledger import CORRECTION_FIELDS, Conflict, Ledger, heads, needs_review, uncertain
 
 MAX_BODY = 2 * 1024 * 1024
@@ -67,11 +73,13 @@ class LocalBoundary:
 
         async def secured(message):
             if message["type"] == "http.response.start":
+                # Callback redirects must not leak codes through a Referer. Ordinary
+                # forms retain same-origin (no-referrer gives Chrome Origin:null).
+                if not any(key.lower() == b"referrer-policy" for key, _ in message["headers"]):
+                    message["headers"].append((b"referrer-policy", b"same-origin"))
                 message["headers"] += [
                     (b"cache-control", b"no-store"),
                     (b"x-content-type-options", b"nosniff"),
-                    # no-referrer makes Chrome send Origin:null on same-origin form POSTs.
-                    (b"referrer-policy", b"same-origin"),
                     (
                         b"content-security-policy",
                         b"default-src 'none'; style-src 'unsafe-inline'; "
@@ -83,12 +91,24 @@ class LocalBoundary:
         await self.app(scope, receive, secured)
 
 
-def create_app(database: str | Path | None = None) -> FastAPI:
+def create_app(database: str | Path | None = None, *, gmail_service=None) -> FastAPI:
     ledger = Ledger(database or os.environ.get("SPENDING_OPTIMISER_DB", DEFAULT_DB))
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.ledger = ledger
+    gmail = gmail_service if gmail_service is not None else GmailService(ledger.path)
+    app.state.gmail = gmail
+    gmail_lock = threading.Lock()
     csrf = secrets.token_urlsafe(32)
     templates = Jinja2Templates(directory=str(files("spending_optimiser").joinpath("templates")))
+    # Only an opaque session ID goes in this signed, HttpOnly cookie. Lax permits
+    # Google's top-level callback GET; existing mutation CSRF cookie stays Strict.
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=secrets.token_urlsafe(32),
+        session_cookie="gmail_session",
+        same_site="lax",
+        max_age=3600,
+    )
     app.add_middleware(LocalBoundary)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]"])
 
@@ -156,6 +176,83 @@ def create_app(database: str | Path | None = None) -> FastAPI:
                 "Local database unavailable; no partial changes saved. Check disk/access and retry."
             ),
         )
+
+    def gmail_operation(action, *args):
+        # Serialize local account switches, refresh and disconnect. Network calls
+        # run off the event loop, so the loading page remains readable.
+        with gmail_lock:
+            try:
+                return action(*args)
+            except GmailProblem as exc:
+                gmail.problem = exc.code
+                return None
+
+    @app.get("/gmail", response_class=HTMLResponse)
+    async def gmail_page(request: Request):
+        request.session.setdefault("id", secrets.token_urlsafe(32))
+        return render(request, "gmail.html", gmail=gmail, messages=MESSAGES)
+
+    @app.post("/gmail/connect", response_class=HTMLResponse)
+    async def gmail_connect(request: Request):
+        await form_data(request, set())
+        if request.url.scheme != "http" or request.url.hostname != "127.0.0.1":
+            raise HTTPException(
+                400, "Open this application on http://127.0.0.1 at its local port to connect Gmail"
+            )
+        session = request.session.setdefault("id", secrets.token_urlsafe(32))
+        redirect = str(request.url.replace(path="/gmail/callback", query=""))
+        url = await run_in_threadpool(gmail_operation, gmail.begin, session, redirect)
+        if url is None:
+            return RedirectResponse("/gmail", status_code=303)
+        # Use an explicit top-level link, not an external POST/form redirect, to
+        # retain the existing form-action 'self' and Origin protections.
+        return render(request, "gmail_connect.html", authorization_url=url)
+
+    @app.get("/gmail/callback")
+    async def gmail_callback(request: Request):
+        pairs = list(request.query_params.multi_items())
+        if (
+            len(pairs) != len(request.query_params)
+            or len(pairs) > 12
+            or len(request.url.query) > 8192
+        ):
+            gmail.problem = "invalid_callback"
+        else:
+            await run_in_threadpool(
+                gmail_operation,
+                gmail.callback,
+                request.session.get("id", ""),
+                dict(pairs),
+                str(request.url.replace(query="")),
+            )
+        # Never render or propagate the authorization code, state or upstream errors.
+        response = RedirectResponse("/gmail", status_code=303)
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
+
+    @app.post("/gmail/restore")
+    async def gmail_restore(request: Request):
+        await form_data(request, set())
+        await run_in_threadpool(gmail_operation, gmail.restore)
+        return RedirectResponse("/gmail", status_code=303)
+
+    @app.post("/gmail/disconnect")
+    async def gmail_disconnect(request: Request):
+        await form_data(request, set())
+        await run_in_threadpool(gmail_operation, gmail.disconnect)
+        return RedirectResponse("/gmail", status_code=303)
+
+    @app.post("/gmail/load")
+    async def gmail_load(request: Request):
+        form = await form_data(request, {"days", "limit", "connection_id"})
+        try:
+            days, limit = int(text_field(form, "days")), int(text_field(form, "limit"))
+        except ValueError:
+            raise HTTPException(422, "Choose numeric range and limit") from None
+        await run_in_threadpool(
+            gmail_operation, gmail.load, days, limit, text_field(form, "connection_id")
+        )
+        return RedirectResponse("/gmail", status_code=303)
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
@@ -264,12 +361,33 @@ def create_app(database: str | Path | None = None) -> FastAPI:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Offline local schema-document ledger")
+    parser = argparse.ArgumentParser(description="Local ledger with optional read-only Gmail")
+    parser.add_argument(
+        "--configure-google",
+        action="store_true",
+        help="Import Desktop OAuth client JSON from stdin to the native OS store, then exit",
+    )
     parser.add_argument(
         "--database", type=Path, help=f"SQLite path (default: {DEFAULT_DB}; env supported)"
     )
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
+    if args.configure_google:
+        try:
+            if sys.stdin.isatty():
+                parser.error("--configure-google requires downloaded client JSON on stdin")
+            raw = sys.stdin.read(65537)
+            if len(raw) > 65536:
+                raise GmailProblem("invalid_configuration")
+            configure_google(NativeStore(), raw)
+        except GmailProblem as exc:
+            print(f"error: {exc.code}; {exc}", file=sys.stderr)
+            raise SystemExit(2) from None
+        print(
+            "Google client saved to native OS credential store. "
+            "Next: start the app and Connect Gmail."
+        )
+        return
     if not 1 <= args.port <= 65535:
         parser.error("port must be between 1 and 65535")
     uvicorn.run(

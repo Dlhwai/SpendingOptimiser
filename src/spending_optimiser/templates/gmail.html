@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Gmail notification candidates</h2>
+<p class="warning">These are untrusted mail candidates, not validated financial facts or ledger transactions. Loading mail does not extract, accept, or change any ledger event. No email content is sent to AI providers.</p>
+{% if gmail.problem %}<p class="warning" role="status">{{ messages[gmail.problem] }}</p>{% endif %}
+<p class="notice" role="status">{{ gmail.notice }}</p>
+{% if gmail.connection %}
+<p><strong>Connected account:</strong> {{ gmail.connection.email }}</p>
+<form action="/gmail/load" method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="connection_id" value="{{ gmail.connection_id }}">
+<label for="days">Recent mail range (includes unrelated mail)</label>
+<select id="days" name="days"><option value="1">Last 1 day</option><option value="7" selected>Last 7 days</option><option value="30">Last 30 days</option></select>
+<label for="limit">Maximum messages examined (1-100, at most 5 pages)</label>
+<input id="limit" name="limit" type="number" min="1" max="100" value="20" required>
+<p class="muted">Query: newer_than:Nd, excluding spam/trash. No whole-mailbox backfill or background polling. The request may take time; wait for the result before retrying. Refresh replaces this temporary batch, preserving stable account-scoped identities.</p>
+<button>{% if gmail.candidates %}Refresh mail{% else %}Load mail{% endif %}</button>
+</form>
+{% else %}<p><strong>Disconnected</strong></p>{% endif %}
+<form action="/gmail/connect" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><button>Connect Gmail{% if gmail.connection %} / change account{% endif %}</button></form>
+{% if not gmail.connection %}
+<form action="/gmail/restore" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><button>Restore saved connection</button></form>
+{% endif %}
+<form action="/gmail/disconnect" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><button>Disconnect Gmail / forget saved authorization</button></form>
+<p class="muted">Disconnect clears temporary candidates and deletes this database's saved refresh authorization from the native OS store. Client setup remains. Restart clears temporary mail and requires Connect or Restore. If deletion fails, unlock the secure store and retry Disconnect.</p>
+<h3>Loaded candidates: {{ gmail.candidates|length }}</h3>
+{% if gmail.connection and gmail.candidates %}
+{% for candidate in gmail.candidates.values() %}
+<details><summary>{{ candidate.subject or '(No unambiguous subject)' }} - received {{ candidate.gmail_internal_at }}</summary>
+<p>Gmail receipt time, not a financial event date. Sender headers below are unverified claims.</p>
+<dl>{% for header in candidate.headers %}<dt>{{ header.name }}</dt><dd>{{ header.value }}</dd>{% endfor %}</dl>
+<pre>{{ candidate.text[:10000] }}</pre>
+{% if candidate.text|length > 10000 %}<p>Display truncated to 10,000 characters of {{ candidate.text|length }}. No HTML, images or links are loaded.</p>{% endif %}
+<small>Private observation identity: {{ candidate.observation.observation_id }}</small>
+{% if candidate.warnings %}<p>Warnings: {{ candidate.warnings|join(', ') }}</p>{% endif %}
+</details>
+{% endfor %}
+{% else %}<p>0 results loaded. Connect, choose a recent range and Load mail. A failed load is not proof of an empty mailbox.</p>{% endif %}
+<p>Setup and troubleshooting: <code>docs/gmail.md</code>. Sign-in and consent occur on Google's page; this app never asks for a Gmail password.</p>
+{% endblock %}
