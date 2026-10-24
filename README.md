@@ -2,7 +2,7 @@
 
 A planned personal spending tracker for maximizing credit-card rewards while keeping monthly cash flow and budgets visible.
 
-**Status: foundational Python schemas implemented and tested. There is no runnable application yet.**
+**Status: foundational Python schemas and an offline-tested read-only Gmail candidate adapter are implemented. There is no runnable ledger application yet. Live Gmail access requires authorization.**
 
 ## Project context
 
@@ -20,7 +20,7 @@ A planned personal spending tracker for maximizing credit-card rewards while kee
 
 ## Implemented milestone
 
-An importable `spending_optimiser` package provides typed Pydantic models for transaction revisions, account/card identities, uncertain card rules, source evidence, and self-contained JSON snapshots. It includes synthetic fixtures, round-trip and validation tests, a pinned uv setup, and CI. It does not calculate rewards, ingest emails, or implement a bank ledger. The three card names remain unresolved; no real terms have been researched.
+An importable `spending_optimiser` package provides typed Pydantic models for transaction revisions, account/card identities, uncertain card rules, source evidence, and self-contained JSON snapshots. It includes synthetic fixtures, round-trip and validation tests, a pinned uv setup, and CI. It does not calculate rewards or implement a bank ledger. A separate read-only Gmail adapter lists and retrieves private notification candidates, with pagination, MIME normalization, stable observation identities, and redacted errors. It creates no accepted transactions. The three card names remain unresolved; no real terms have been researched.
 
 See [schema usage and limits](docs/schemas.md). Quick start (Python 3.11.9, uv 0.11.8):
 
@@ -31,9 +31,22 @@ uv run --locked ruff check .
 uv run --locked ruff format --check .
 ```
 
+## Gmail adapter
+
+See [Gmail usage, privacy, limits and future authorized OAuth setup](docs/gmail.md).
+Run the synthetic example without credentials or network access:
+
+```sh
+uv run --locked python examples/gmail_synthetic.py
+```
+
+Live Gmail and actual bank-notification compatibility have **not** been verified.
+OAuth consent, refresh and OS credential storage remain host responsibilities;
+this adapter does not read or change credential stores.
+
 ## Proposed technical direction
 
-A modular Python application with FastAPI, SQLite, and a lightweight Jinja2/HTMX dashboard. Keep deterministic financial calculations independent of Gmail, model providers, persistence, and UI clients. Only the Pydantic domain package is implemented; the service, storage, and dashboard stack remains proposed.
+A modular Python application with FastAPI, SQLite, and a lightweight Jinja2/HTMX dashboard. Keep deterministic financial calculations independent of Gmail, model providers, persistence, and UI clients. The Pydantic domain package and independent Gmail adapter are implemented; the service, storage, and dashboard stack remains proposed.
 
 ## Privacy
 
