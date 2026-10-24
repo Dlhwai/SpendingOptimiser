@@ -83,7 +83,7 @@ Unambiguous, validated records can be accepted automatically. Ambiguous or incom
 
 - One local executable/service with a browser dashboard and manual transaction refresh.
 - Modular monolith: domain calculations, application use cases, infrastructure adapters, web UI, and CLI. Reusable service boundaries do not initially require separate deployments.
-- Suggested stack: Python, FastAPI, Pydantic, SQLite with SQLAlchemy/Alembic, and Jinja2/HTMX. These remain architectural recommendations, not installed dependencies.
+- Suggested stack: Python, FastAPI, Pydantic, SQLite with SQLAlchemy/Alembic, and Jinja2/HTMX. Python/Pydantic domain schemas are implemented; the other components remain architectural recommendations, not installed dependencies.
 - Deterministic reward and budget calculations consume validated, versioned data. AI researches documents and proposes extractions; it is not the financial source of truth.
 - Store source evidence and audit history. Monthly totals are rebuildable projections, not the only retained records.
 - Use durable job state for Gmail refresh, adaptive extraction, onboarding, and daily news/term checks.
@@ -104,14 +104,16 @@ Unambiguous, validated records can be accepted automatically. Ambiguous or incom
 
 ## Current status and next steps
 
-This repository contains requirements and an architecture proposal only. No runnable application, Gmail integration, scheduler, live card-rule catalog, or application tests have been implemented.
+The foundational schema milestone is implemented as the importable `spending_optimiser` Python package with Pydantic validation, a pinned uv development/test setup, synthetic fixtures, automated tests and CI. It represents transaction/source/revision identities, purchase/refund/reversal/income/transfer events, personal accounts/cards separately from public products, per-field uncertainty and evidence, native rewards separately from redemption/valuation, and historical rule/evidence revisions. See [schema usage and limitations](docs/schemas.md).
+
+There is no runnable application, financial calculation engine, persistence, Gmail integration, scheduler, or researched card-rule catalog. Schema validation is not a complete bank ledger or a rule-publication gate. The three named cards remain unverified supplied labels.
 
 Suggested build order:
 
-1. Define canonical transaction, card-rule, source-evidence, and versioning schemas.
+1. Implemented: foundational transaction, card-rule, source-evidence, and versioning schemas. Validate and refine these against independently verified examples as later capabilities are built.
 2. Build one bank's Gmail-to-ledger path, adaptive extraction, refresh UI, and basic monthly budget.
 3. Research the three current cards, verify the rule schema against their terms, and add reusable chatbot onboarding.
 4. Add daily MileLion/official-term monitoring and policy-gated rule publication.
 5. Expand reconciliation, promotion tracking, reminders, and planned-spend recommendations.
 
-Inputs still needed: sanitized notification examples, personal approval/enrollment and campaign details, budget/savings assumptions, and the transaction-extraction model/privacy choice.
+Later integration milestones may need sanitized notification examples, personal approval/enrollment and campaign details, budget/savings assumptions, and the transaction-extraction model/privacy choice. None is required for the schema-only milestone.

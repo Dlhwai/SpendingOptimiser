@@ -2,7 +2,7 @@
 
 A planned personal spending tracker for maximizing credit-card rewards while keeping monthly cash flow and budgets visible.
 
-**Status: requirements and architecture only. There is no runnable application yet.**
+**Status: foundational Python schemas implemented and tested. There is no runnable application yet.**
 
 ## Project context
 
@@ -18,9 +18,22 @@ A planned personal spending tracker for maximizing credit-card rewards while kee
 - Monthly spending, cash flow, reward/promotion progress, and remaining daily allowance.
 - A local executable/service with a browser dashboard and manual transaction refresh.
 
+## Implemented milestone
+
+An importable `spending_optimiser` package provides typed Pydantic models for transaction revisions, account/card identities, uncertain card rules, source evidence, and self-contained JSON snapshots. It includes synthetic fixtures, round-trip and validation tests, a pinned uv setup, and CI. It does not calculate rewards, ingest emails, or implement a bank ledger. The three card names remain unresolved; no real terms have been researched.
+
+See [schema usage and limits](docs/schemas.md). Quick start (Python 3.11.9, uv 0.11.8):
+
+```sh
+uv sync --locked
+uv run --locked pytest
+uv run --locked ruff check .
+uv run --locked ruff format --check .
+```
+
 ## Proposed technical direction
 
-A modular Python application with FastAPI, SQLite, and a lightweight Jinja2/HTMX dashboard. Keep deterministic financial calculations independent of Gmail, model providers, persistence, and UI clients. The stack is proposed, not scaffolded or installed.
+A modular Python application with FastAPI, SQLite, and a lightweight Jinja2/HTMX dashboard. Keep deterministic financial calculations independent of Gmail, model providers, persistence, and UI clients. Only the Pydantic domain package is implemented; the service, storage, and dashboard stack remains proposed.
 
 ## Privacy
 
@@ -28,4 +41,4 @@ Commit only source code, documentation, and sanitized fixtures. Keep actual fina
 
 ## Next step
 
-Define the transaction, card-rule, source-evidence, and versioning schemas, then build and test one complete Gmail-to-ledger path.
+Build and test one complete ingestion/review path with persistence, using the foundational schemas. Live integrations and exact card-term research remain separate milestones.
