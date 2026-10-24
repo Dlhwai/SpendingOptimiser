@@ -5,7 +5,7 @@ import binascii
 import hashlib
 from dataclasses import dataclass, field
 from email.errors import MessageError
-from email.header import decode_header
+from email.header import decode_header, ecre
 from email.message import Message
 from html.parser import HTMLParser
 
@@ -51,11 +51,17 @@ def headers(payload: dict, locator: str) -> tuple[Header, ...]:
 
 
 def decoded_header(value: str) -> str:
+    chunks, pos = [], 0
     try:
-        return "".join(
-            part.decode(charset or "ascii", errors="strict") if isinstance(part, bytes) else part
-            for part, charset in decode_header(value)
-        )
+        for word in ecre.finditer(value):
+            gap = value[pos : word.start()]
+            if not (pos and gap.isspace()):
+                chunks.append(gap)
+            ((raw, charset),) = decode_header(word.group(0))
+            chunks.append(raw.decode(charset, errors="strict"))
+            pos = word.end()
+        chunks.append(value[pos:])
+        return "".join(chunks)
     except (LookupError, UnicodeError, ValueError, MessageError) as exc:
         raise InvalidMessage() from exc
 

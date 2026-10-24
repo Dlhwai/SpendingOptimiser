@@ -405,6 +405,24 @@ def test_invalid_message_metadata(change):
 
 
 
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("€5 =?utf-8?q?spent?=", "€5 spent"),
+        ("Café =?utf-8?q?x?=", "Café x"),
+        ("C:\\u20ac é =?utf-8?q?x?=", "C:\\u20ac é x"),
+        ("=?utf-8?q?a?=  =?utf-8?q?b?= c", "ab c"),
+    ],
+)
+def test_subject_mixing_raw_unicode_and_encoded_words_is_preserved(raw, expected):
+    msg = message()
+    for header in msg["payload"]["headers"]:
+        if header["name"] == "Subject":
+            header["value"] = raw
+    result = adapter(FakeClient(messages={"m1": msg})).get_candidate("m1")
+    assert result.error is None and result.candidate.subject == expected
+
+
 def test_malformed_encoded_subject_is_invalid_message_without_aborting_page():
     bad = message("m2")
     for header in bad["payload"]["headers"]:
