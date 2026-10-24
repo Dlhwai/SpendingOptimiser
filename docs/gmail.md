@@ -88,7 +88,7 @@ headers are retained. This adapter performs no DKIM/SPF/DMARC verification.
   `internalDate` (usually SMTP receipt ordering, but imports can supply it).
   `sent_at` is the untrusted Date header with its timezone; absent, ambiguous or
   invalid values become `None`, with warnings for invalid/ambiguous values.
-  **None is a financial event date or posting date.**
+  **None of these timestamps is a financial event date or posting date.**
 - `headers` preserve selected original values with JSON-pointer locators.
   `subject` separately decodes RFC2047 encoded words. `parts` contain every
   inline `text/plain` and `text/html` alternative, with MIME type, payload/body

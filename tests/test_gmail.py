@@ -404,6 +404,22 @@ def test_invalid_message_metadata(change):
     assert result.candidate is None and result.error.code == "invalid_message"
 
 
+
+def test_malformed_encoded_subject_is_invalid_message_without_aborting_page():
+    bad = message("m2")
+    for header in bad["payload"]["headers"]:
+        if header["name"] == "Subject":
+            header["value"] = "=?utf-8?b?abcde?="
+    client = FakeClient(
+        pages={None: {"messages": [{"id": "m1"}, {"id": "m2"}]}},
+        messages={"m1": message(), "m2": bad},
+    )
+    page = adapter(client).fetch_page(query="synthetic")
+    assert not page.successful and page.candidate_count == 1
+    assert page.results[0].candidate is not None
+    assert page.results[1].candidate is None
+    assert page.results[1].error.code == "invalid_message"
+
 class Tokens:
     def __init__(self, value="synthetic-token"):
         self.value = value

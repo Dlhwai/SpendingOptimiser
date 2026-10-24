@@ -4,6 +4,7 @@ import base64
 import binascii
 import hashlib
 from dataclasses import dataclass, field
+from email.errors import MessageError
 from email.header import decode_header
 from email.message import Message
 from html.parser import HTMLParser
@@ -55,7 +56,7 @@ def decoded_header(value: str) -> str:
             part.decode(charset or "ascii", errors="strict") if isinstance(part, bytes) else part
             for part, charset in decode_header(value)
         )
-    except (LookupError, UnicodeError, ValueError) as exc:
+    except (LookupError, UnicodeError, ValueError, MessageError) as exc:
         raise InvalidMessage() from exc
 
 
