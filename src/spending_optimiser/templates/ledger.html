@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>{{ 'Review queue' if review_only else 'Persisted ledger' }}</h2>
+<p>{{ transactions|length }} {{ 'queued events' if review_only else 'events' }}; {{ review_count }} need review; {{ revision_count }} historical transaction revisions.</p>
+{% if added is not none %}<p class="notice">Import saved: {{ added }} new records; {{ unchanged }} unchanged records. All linked schema collections are included in these counts.</p>{% endif %}
+{% if transactions %}<table><thead><tr><th>Event</th><th>Kind / date</th><th>Amount magnitude</th><th>Review</th></tr></thead><tbody>
+{% for t in transactions %}<tr><td><a href="{{ '/transaction?event_id=' ~ (t.event_id|urlencode) }}">{{ t.event_id }}</a>{% if t.duplicate_of %}<br>Explicit duplicate of {{ t.duplicate_of }}{% endif %}</td>
+<td>{{ t.kind.value or t.kind.status }}<br>{{ t.occurred_on.value or t.occurred_on.status }}</td>
+<td>{% if t.amount.value %}{{ t.amount.value.currency }} {{ t.amount.value.minor_units }} minor units{% else %}{{ t.amount.status }}{% endif %}<br><small>{{ t.amount.status }}; not a signed bank posting</small></td><td>{{ t.review.status }}</td></tr>{% endfor %}
+</tbody></table>{% else %}<p class="notice">0 results. {{ 'No events currently require review.' if review_only else 'Import a schema document below to begin.' }}</p>{% endif %}
+{% if not review_only %}
+<section><h2>Import a schema document</h2><p>Self-contained format 1.0 JSON only, at most 2 MiB including form overhead. This is a snapshot importer, not an email parser. A failed import saves nothing; duplicate identities must match exactly. Locally reviewed events cannot be extended by later imports.</p>
+<form action="/import" method="post" enctype="multipart/form-data">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<label for="file">JSON file (or paste below, not both)</label><input id="file" name="file" type="file" accept=".json,application/json">
+<label for="document">Schema-document JSON</label><textarea id="document" name="document" placeholder='{"schema_version":"1.0", "transactions":[]}'></textarea>
+<button type="submit">Import document atomically</button></form>
+<h3>Synthetic offline example</h3><p>Bundled, entirely synthetic test data, with one reviewable purchase and unverified public card-rule examples. No credentials or external connections required. Named cards are unresolved labels, not researched terms.</p>
+<form action="/example" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Import bundled synthetic example</button></form></section>
+{% endif %}
+<p>Next: open an event to inspect its evidence, correct a fact, or record a review.</p>
+{% endblock %}

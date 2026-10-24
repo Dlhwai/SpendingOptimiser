@@ -5,12 +5,21 @@ build-backend = "hatchling.build"
 [project]
 name = "spending-optimiser"
 version = "0.1.0"
-description = "Evidence-backed domain schemas for SpendingOptimiser"
+description = "Local evidence-backed transaction import and review ledger"
 requires-python = ">=3.11"
-dependencies = ["pydantic==2.12.3"]
+dependencies = [
+    "pydantic==2.12.3",
+    "fastapi==0.119.1",
+    "uvicorn==0.38.0",
+    "jinja2==3.1.6",
+    "python-multipart==0.0.20",
+]
+
+[project.scripts]
+spending-optimiser = "spending_optimiser.web:main"
 
 [dependency-groups]
-dev = ["pytest==8.4.2", "ruff==0.14.2"]
+dev = ["pytest==8.4.2", "ruff==0.14.2", "httpx==0.28.1"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/spending_optimiser"]

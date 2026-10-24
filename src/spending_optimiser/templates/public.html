@@ -1,0 +1,4 @@
+{% extends 'base.html' %}
+{% block content %}<h2>Public card data and evidence</h2><p>Separate from private accounts, transaction observations, and review history. Stored assertions only, not an activated or verified rule catalog. No documents are fetched.</p>
+{% for name, records in public.items() %}<h3>{{ name }}: {{ records|length }} records</h3>{% for record in records %}<pre>{{ record|tojson(indent=2) }}</pre>{% else %}<p>0 results.</p>{% endfor %}{% endfor %}
+<p>Next: <a href="/">return to the local ledger</a>.</p>{% endblock %}

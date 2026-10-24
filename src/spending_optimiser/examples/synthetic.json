@@ -1,0 +1,69 @@
+{
+  "schema_version": "1.0",
+  "products": [
+    {"product_id": "maybank-unresolved", "supplied_name": "Maybank Rewards XL"},
+    {"product_id": "dbs-unresolved", "supplied_name": "DBS yuu Credit Card Visa"},
+    {"product_id": "trust-unresolved", "supplied_name": "Trust Freedom Card"},
+    {"product_id": "synthetic-product", "supplied_name": "Synthetic Test Card"}
+  ],
+  "accounts": [
+    {"account_id": "test-card-account", "kind": "credit_card", "label": "Synthetic card"},
+    {"account_id": "test-bank-account", "kind": "deposit", "label": "Synthetic bank"}
+  ],
+  "cards": [{
+    "card_id": "test-card", "product_id": "synthetic-product", "account_id": "test-card-account"
+  }],
+  "observations": [{
+    "observation_id": "test-observation", "source_system": "synthetic",
+    "source_namespace": "test-mailbox", "source_record_id": "test-message",
+    "observed_at": "2025-01-02T10:00:00+08:00"
+  }],
+  "evidence": [{
+    "revision_id": "test-evidence-v1", "source_id": "test-document",
+    "source_kind": "synthetic", "url": "https://example.invalid/synthetic-terms",
+    "retrieved_at": "2025-01-02T11:00:00+08:00",
+    "effective": {"status": "proposed", "value": {"start": "2025-01-01", "end": "2026-01-01"}},
+    "document_version": "synthetic-1"
+  }],
+  "rules": [{
+    "rule_id": "test-standard-rules", "revision_id": "test-rules-v1", "product_id": "synthetic-product",
+    "compiled_at": "2025-01-02T12:00:00+08:00",
+    "effective": {"status": "proposed", "value": {"start": "2025-01-01", "end": "2026-01-01"}},
+    "earning": {
+      "status": "proposed", "value": [{
+        "rate_id": "test-base", "component": "base",
+        "reward": {"status": "verified", "value": {
+          "unit": {"unit_id": "test-points", "kind": "points"}, "quantity": "3"
+        }, "evidence": [{"evidence_revision_id": "test-evidence-v1", "locator": "section 1"}]},
+        "per_spend": {"status": "proposed", "value": {"currency": "SGD", "minor_units": 100}},
+        "date_basis": {"status": "proposed", "value": "transaction_date"}
+      }]
+    },
+    "minimum_spend": {"status": "proposed", "value": [{
+      "requirement_id": "test-minimum", "applies_to": {"status": "proposed", "value": ["test-base"]},
+      "threshold": {"status": "proposed", "value": {"currency": "SGD", "minor_units": 50000}},
+      "date_basis": {"status": "proposed", "value": "posting_date"},
+      "period": {"status": "proposed", "value": {"kind": "calendar_month", "timezone": "Asia/Singapore"}}
+    }]},
+    "caps": {"status": "proposed", "value": [{
+      "cap_id": "test-cap", "basis": "reward", "applies_to": {"status": "proposed", "value": ["test-base"]},
+      "limit": {"status": "proposed", "value": {
+        "unit": {"unit_id": "test-points", "kind": "points"}, "quantity": "1000"
+      }}
+    }]},
+    "eligibility": {"status": "conflicting", "note": "Synthetic contradictory examples only", "alternatives": [
+      [{"dimension": "channel", "operator": "equals", "operands": ["online"], "description": "Online only"}],
+      [{"dimension": "channel", "operator": "equals", "operands": ["in_store"], "description": "In-store only"}]
+    ]}
+  }],
+  "transactions": [{
+    "event_id": "test-purchase", "revision_id": "test-purchase-v1",
+    "recorded_at": "2025-01-02T10:01:00+08:00",
+    "origins": [{"observation_id": "test-observation", "event_key": "event-1", "extractor_revision": "test-parser-v1", "processing_run_id": "test-run-1"}],
+    "kind": {"status": "proposed", "value": "purchase"},
+    "amount": {"status": "verified", "value": {"currency": "SGD", "minor_units": 1234}, "evidence": [{"target": "observation", "evidence_revision_id": "test-observation", "locator": "amount"}]},
+    "occurred_on": {"status": "proposed", "value": "2025-01-01"},
+    "account_id": {"status": "proposed", "value": "test-card-account"},
+    "card_id": {"status": "proposed", "value": "test-card"}
+  }]
+}
