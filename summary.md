@@ -79,11 +79,11 @@ Unambiguous, validated records can be accepted automatically. Ambiguous or incom
 - Report updates, pending reviews, failures, last successful check, and next run. Distinguish "0 relevant updates" from a failed or incomplete check.
 - Use configurable daily scheduling in Asia/Singapore, idempotent jobs, and catch-up after downtime. A stopped executable or powered-off machine cannot perform unattended checks without a suitable scheduler/host.
 
-## Proposed implementation, not yet built
+## Proposed direction and implemented local subset
 
-- One local executable/service with a browser dashboard and manual transaction refresh.
+- Implemented: one local executable/service with a server-rendered browser ledger, local-data refresh, schema-document import, and auditable manual review/correction. See [local application setup and limits](docs/local-ledger.md).
 - Modular monolith: domain calculations, application use cases, infrastructure adapters, web UI, and CLI. Reusable service boundaries do not initially require separate deployments.
-- Suggested stack: Python, FastAPI, Pydantic, SQLite with SQLAlchemy/Alembic, and Jinja2/HTMX. Python/Pydantic domain schemas and a bounded, fixture-tested notification extraction use case are implemented; the service/storage/UI components remain architectural recommendations, not installed dependencies.
+- Implemented stack: Python, FastAPI, Pydantic, SQLite through the standard library, and Jinja2 forms. A bounded, fixture-tested notification extraction use case is also implemented. SQLAlchemy/Alembic and HTMX remain optional architectural recommendations, not installed dependencies.
 - Deterministic reward and budget calculations consume validated, versioned data. AI researches documents and proposes extractions; it is not the financial source of truth.
 - Store source evidence and audit history. Monthly totals are rebuildable projections, not the only retained records.
 - Use durable job state for Gmail refresh, adaptive extraction, onboarding, and daily news/term checks.
@@ -108,14 +108,16 @@ The foundational schema milestone is implemented as the importable `spending_opt
 
 A [constrained extraction use case](docs/extraction.md) now accepts notification data independently of Gmail, uses one injected model callable with a bounded span-selection contract, and returns existing pending-review transaction proposals. Deterministic validation covers a small labelled fixture grammar, not qualified real-bank formats or general-language model accuracy. Synthetic fixtures and fake clients require no live provider or privacy choice; private content is blocked from the callable without explicit per-call opt-in.
 
-There is no runnable application, live model client, financial calculation engine, persistence, Gmail integration, scheduler, or researched card-rule catalog. Schema validation is not a complete bank ledger or a rule-publication gate. The three named cards remain unverified supplied labels.
+A runnable offline local service now imports validated schema documents atomically into SQLite, shows the persisted event ledger and evidence, and records immutable review/correction revisions. Duplicate reimports are harmless; conflicts fail explicitly, and imports cannot overwrite local manual revisions. The bundled synthetic example exercises the whole path without credentials or an external model. See [setup, synthetic walkthrough, guarantees and limitations](docs/local-ledger.md).
+
+There is no live model client, financial calculation engine, Gmail integration, qualified bank-email parser, scheduler, or researched card-rule catalog in this milestone. The event ledger is not complete bank reconciliation or a rule-publication gate. The three named cards remain unverified supplied labels.
 
 Suggested build order:
 
 1. Implemented: foundational transaction, card-rule, source-evidence, and versioning schemas. Validate and refine these against independently verified examples as later capabilities are built.
-2. Build one bank's Gmail-to-ledger path, adaptive extraction, refresh UI, and basic monthly budget.
+2. Implemented local subset: schema-document ingestion/review, persistence, and refresh UI. Later: qualify one bank's Gmail-to-ledger adapter, adaptive extraction, and basic monthly budget.
 3. Research the three current cards, verify the rule schema against their terms, and add reusable chatbot onboarding.
 4. Add daily MileLion/official-term monitoring and policy-gated rule publication.
 5. Expand reconciliation, promotion tracking, reminders, and planned-spend recommendations.
 
-Later integration milestones may need sanitized notification examples, personal approval/enrollment and campaign details, budget/savings assumptions, and the transaction-extraction model/privacy choice. None is required for the schema or synthetic extraction milestones.
+Later integration milestones may need sanitized notification examples, personal approval/enrollment and campaign details, budget/savings assumptions, and the transaction-extraction model/privacy choice. None is required for the schema, synthetic extraction, or offline synthetic-data milestones.

@@ -2,7 +2,7 @@
 
 A planned personal spending tracker for maximizing credit-card rewards while keeping monthly cash flow and budgets visible.
 
-**Status: foundational Python schemas and constrained, fixture-tested extraction proposals implemented. There is no runnable application or live model integration yet.**
+**Status: foundational schemas, constrained fixture-tested extraction proposals, and an offline local import, persistence, and review application. There is no live model integration yet.**
 
 ## Project context
 
@@ -20,7 +20,7 @@ A planned personal spending tracker for maximizing credit-card rewards while kee
 
 ## Implemented milestone
 
-An importable `spending_optimiser` package provides typed Pydantic models for transaction revisions, account/card identities, uncertain card rules, source evidence, and self-contained JSON snapshots. It includes synthetic fixtures, round-trip and validation tests, a pinned uv setup, and CI. It does not calculate rewards, fetch emails, or implement a bank ledger. A separate [constrained extraction use case](docs/extraction.md) accepts notification data and an injected model callable, validates bounded evidence spans, and returns pending-review proposals using synthetic fixtures. No provider client or qualified real-bank parser is implemented. The three card names remain unresolved; no real terms have been researched.
+An importable `spending_optimiser` package provides typed Pydantic models for transaction revisions, account/card identities, uncertain card rules, source evidence, and self-contained JSON snapshots. It includes synthetic fixtures, round-trip and validation tests, a pinned uv setup, and CI. A local FastAPI browser service now imports these validated snapshots transactionally into SQLite, displays a persisted event ledger, and preserves auditable review/correction revisions. It does not calculate rewards, ingest emails, or reconcile bank statements. A separate [constrained extraction use case](docs/extraction.md) accepts notification data and an injected model callable, validates bounded evidence spans, and returns pending-review proposals using synthetic fixtures. No provider client or qualified real-bank parser is implemented. The three card names remain unresolved; no real terms have been researched.
 
 See [schema usage and limits](docs/schemas.md). Quick start (Python 3.11.9, uv 0.11.8):
 
@@ -31,9 +31,30 @@ uv run --locked ruff check .
 uv run --locked ruff format --check .
 ```
 
-## Proposed technical direction
+## Run the local application
 
-A modular Python application with FastAPI, SQLite, and a lightweight Jinja2/HTMX dashboard. Keep deterministic financial calculations independent of Gmail, model providers, persistence, and UI clients. The Pydantic domain package and bounded extraction use case are implemented; the service, storage, and dashboard stack remains proposed.
+After `uv sync --locked`, start the loopback-only service:
+
+```sh
+uv run --locked spending-optimiser
+```
+
+Open **http://127.0.0.1:8765**, click **Import bundled synthetic example**, and open
+**Review queue** to inspect evidence and correct/review the purchase. No credentials,
+real financial data, model, or Internet access are needed after dependency installation.
+Refresh rereads the local database, not Gmail.
+
+Data defaults to `~/.local/share/spending-optimiser/ledger.sqlite3`. Override with
+`--database /absolute/private/path/ledger.sqlite3` or `SPENDING_OPTIMISER_DB`.
+See [local setup, full synthetic walkthrough, storage/review guarantees, and limits](docs/local-ledger.md).
+
+## Technical direction
+
+One Python service uses FastAPI, SQLite, and server-rendered Jinja2 forms, without
+JavaScript dependencies or a frontend build. The bounded extraction use case is
+implemented separately and not yet wired into the service. Deterministic financial
+calculations remain a later capability, independent of ingestion, model providers,
+persistence, and UI clients.
 
 ## Privacy
 
@@ -41,4 +62,4 @@ Commit only source code, documentation, and sanitized fixtures. Keep actual fina
 
 ## Next step
 
-Build and test one complete ingestion/review path with persistence, using the foundational schemas. Live integrations and exact card-term research remain separate milestones.
+The local schema-document ingestion/review path with persistence is implemented and tested. Next, qualify a real notification ingestion adapter against sanitized source examples. Live integrations, adaptive extraction, financial calculations, and exact card-term research remain separate milestones.
