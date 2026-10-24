@@ -110,7 +110,9 @@ A [constrained extraction use case](docs/extraction.md) now accepts notification
 
 A runnable offline local service now imports validated schema documents atomically into SQLite, shows the persisted event ledger and evidence, and records immutable review/correction revisions. Duplicate reimports are harmless; conflicts fail explicitly, and imports cannot overwrite local manual revisions. The bundled synthetic example exercises the whole path without credentials or an external model. See [setup, synthetic walkthrough, guarantees and limitations](docs/local-ledger.md).
 
-There is no live model client, financial calculation engine, Gmail integration, qualified bank-email parser, scheduler, or researched card-rule catalog in this milestone. The event ledger is not complete bank reconciliation or a rule-publication gate. The three named cards remain unverified supplied labels.
+A separate offline-tested, read-only Gmail candidate adapter lists and retrieves notification candidates without creating transactions; live Gmail access still requires authorization. See [Gmail usage, privacy and limits](docs/gmail.md).
+
+There is no live model client, financial calculation engine, live or ledger-wired Gmail integration, qualified bank-email parser, scheduler, or researched card-rule catalog in this milestone. The event ledger is not complete bank reconciliation or a rule-publication gate. The three named cards remain unverified supplied labels.
 
 Suggested build order:
 

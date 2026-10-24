@@ -2,7 +2,7 @@
 
 A planned personal spending tracker for maximizing credit-card rewards while keeping monthly cash flow and budgets visible.
 
-**Status: foundational schemas, constrained fixture-tested extraction proposals, and an offline local import, persistence, and review application. There is no live model integration yet.**
+**Status: foundational schemas, constrained fixture-tested extraction proposals, an offline local import/persistence/review application, and an offline-tested read-only Gmail candidate adapter are implemented. There is no live model integration yet. Live Gmail access requires authorization.**
 
 ## Project context
 
@@ -20,7 +20,7 @@ A planned personal spending tracker for maximizing credit-card rewards while kee
 
 ## Implemented milestone
 
-An importable `spending_optimiser` package provides typed Pydantic models for transaction revisions, account/card identities, uncertain card rules, source evidence, and self-contained JSON snapshots. It includes synthetic fixtures, round-trip and validation tests, a pinned uv setup, and CI. A local FastAPI browser service now imports these validated snapshots transactionally into SQLite, displays a persisted event ledger, and preserves auditable review/correction revisions. It does not calculate rewards, ingest emails, or reconcile bank statements. A separate [constrained extraction use case](docs/extraction.md) accepts notification data and an injected model callable, validates bounded evidence spans, and returns pending-review proposals using synthetic fixtures. No provider client or qualified real-bank parser is implemented. The three card names remain unresolved; no real terms have been researched.
+An importable `spending_optimiser` package provides typed Pydantic models for transaction revisions, account/card identities, uncertain card rules, source evidence, and self-contained JSON snapshots. It includes synthetic fixtures, round-trip and validation tests, a pinned uv setup, and CI. A local FastAPI browser service now imports these validated snapshots transactionally into SQLite, displays a persisted event ledger, and preserves auditable review/correction revisions. It does not calculate rewards, ingest emails through the service, or reconcile bank statements. A separate [constrained extraction use case](docs/extraction.md) accepts notification data and an injected model callable, validates bounded evidence spans, and returns pending-review proposals using synthetic fixtures. No provider client or qualified real-bank parser is implemented. A separate read-only Gmail adapter lists and retrieves private notification candidates, with pagination, MIME normalization, stable observation identities, and redacted errors. It creates no accepted transactions. The three card names remain unresolved; no real terms have been researched.
 
 See [schema usage and limits](docs/schemas.md). Quick start (Python 3.11.9, uv 0.11.8):
 
@@ -48,13 +48,26 @@ Data defaults to `~/.local/share/spending-optimiser/ledger.sqlite3`. Override wi
 `--database /absolute/private/path/ledger.sqlite3` or `SPENDING_OPTIMISER_DB`.
 See [local setup, full synthetic walkthrough, storage/review guarantees, and limits](docs/local-ledger.md).
 
+## Gmail adapter
+
+See [Gmail usage, privacy, limits and future authorized OAuth setup](docs/gmail.md).
+Run the synthetic example without credentials or network access:
+
+```sh
+uv run --locked python examples/gmail_synthetic.py
+```
+
+Live Gmail and actual bank-notification compatibility have **not** been verified.
+OAuth consent, refresh and OS credential storage remain host responsibilities;
+this adapter does not read or change credential stores.
+
 ## Technical direction
 
 One Python service uses FastAPI, SQLite, and server-rendered Jinja2 forms, without
-JavaScript dependencies or a frontend build. The bounded extraction use case is
-implemented separately and not yet wired into the service. Deterministic financial
-calculations remain a later capability, independent of ingestion, model providers,
-persistence, and UI clients.
+JavaScript dependencies or a frontend build. The bounded extraction use case and
+read-only Gmail adapter are implemented separately and not yet wired into the
+service. Deterministic financial calculations remain a later capability,
+independent of ingestion, model providers, persistence, and UI clients.
 
 ## Privacy
 
