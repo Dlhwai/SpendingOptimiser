@@ -55,13 +55,19 @@ def decoded_header(value: str) -> str:
     try:
         for word in ecre.finditer(value):
             gap = value[pos : word.start()]
-            if not (pos and gap.isspace()):
+            if not pos or gap.strip():
                 chunks.append(gap)
             ((raw, charset),) = decode_header(word.group(0))
-            chunks.append(raw.decode(charset, errors="strict"))
+            if isinstance(chunks[-1], tuple) and chunks[-1][0] == charset:
+                chunks[-1] = (charset, chunks[-1][1] + raw)
+            else:
+                chunks.append((charset, raw))
             pos = word.end()
         chunks.append(value[pos:])
-        return "".join(chunks)
+        return "".join(
+            chunk if isinstance(chunk, str) else chunk[1].decode(chunk[0], errors="strict")
+            for chunk in chunks
+        )
     except (LookupError, UnicodeError, ValueError, MessageError) as exc:
         raise InvalidMessage() from exc
 

@@ -412,6 +412,9 @@ def test_invalid_message_metadata(change):
         ("Café =?utf-8?q?x?=", "Café x"),
         ("C:\\u20ac é =?utf-8?q?x?=", "C:\\u20ac é x"),
         ("=?utf-8?q?a?=  =?utf-8?q?b?= c", "ab c"),
+        ("=?utf-8?b?4oI=?= =?utf-8?b?rDU=?=", "€5"),
+        ("=?utf-8?q?=E2=82?==?UTF-8?q?=AC?= x", "€ x"),
+        ("a =?utf-8?q?=E2=82?= b =?utf-8?q?=AC?=", None),
     ],
 )
 def test_subject_mixing_raw_unicode_and_encoded_words_is_preserved(raw, expected):
@@ -420,7 +423,10 @@ def test_subject_mixing_raw_unicode_and_encoded_words_is_preserved(raw, expected
         if header["name"] == "Subject":
             header["value"] = raw
     result = adapter(FakeClient(messages={"m1": msg})).get_candidate("m1")
-    assert result.error is None and result.candidate.subject == expected
+    if expected is None:
+        assert result.candidate is None and result.error.code == "invalid_message"
+    else:
+        assert result.error is None and result.candidate.subject == expected
 
 
 def test_malformed_encoded_subject_is_invalid_message_without_aborting_page():
