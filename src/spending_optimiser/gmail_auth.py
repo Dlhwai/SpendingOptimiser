@@ -1,5 +1,6 @@
 """Desktop Google authorization and native-only credentials. No mail or ledger writes."""
 
+import functools
 import json
 import re
 import secrets
@@ -157,7 +158,11 @@ class GoogleOAuth:
     def __init__(self, *, transport=None, auth_request=None, verify=None):
         self.transport = transport if transport is not None else UrllibGetTransport()
         self.auth_request = auth_request if auth_request is not None else Request()
-        self.verify = verify if verify is not None else id_token.verify_oauth2_token
+        self.verify = (
+            verify
+            if verify is not None
+            else functools.partial(id_token.verify_oauth2_token, clock_skew_in_seconds=10)
+        )
 
     def begin(self, config, redirect):
         try:

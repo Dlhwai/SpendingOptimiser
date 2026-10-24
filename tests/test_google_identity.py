@@ -15,7 +15,10 @@ from google.oauth2.credentials import Credentials
 from spending_optimiser.gmail_auth import SCOPES, GmailProblem, GoogleOAuth
 
 
-@pytest.mark.parametrize("invalid", [None, "audience", "issuer", "expired", "nonce", "signature"])
+@pytest.mark.parametrize(
+    "invalid",
+    [None, "clock_skew", "audience", "issuer", "expired", "too_early", "nonce", "signature"],
+)
 def test_real_signature_and_claim_verification(invalid):
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Synthetic only")])
@@ -47,6 +50,10 @@ def test_real_signature_and_claim_verification(invalid):
         claims["iss"] = "https://untrusted.invalid"
     elif invalid == "expired":
         claims["iat"], claims["exp"] = 100, 200
+    elif invalid == "clock_skew":
+        claims["iat"] += 5
+    elif invalid == "too_early":
+        claims["iat"] += 120
     elif invalid == "nonce":
         claims["nonce"] = "wrong-nonce"
     if invalid == "signature":
@@ -87,7 +94,7 @@ def test_real_signature_and_claim_verification(invalid):
             return {"emailAddress": "synthetic@example.invalid"}
 
     oauth = GoogleOAuth(auth_request=certificate_request, transport=Profile())
-    if invalid:
+    if invalid and invalid != "clock_skew":
         with pytest.raises(GmailProblem, match="authorization failed"):
             oauth.finish(flow, "synthetic-code", "synthetic-nonce")
     else:
