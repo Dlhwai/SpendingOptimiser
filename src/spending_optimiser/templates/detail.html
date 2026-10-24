@@ -22,7 +22,7 @@
 <label for="reason">Reason</label><input id="reason" name="reason" required maxlength="2000" size="70" autocomplete="off">
 <label for="field">Field to correct (leave empty for review only)</label><select id="field" name="field"><option value="">No field correction</option>{% for name in fields %}<option value="{{ name }}">{{ name }}</option>{% endfor %}</select>
 <label for="fact_json">Replacement Fact JSON (leave empty for review only)</label><textarea id="fact_json" name="fact_json" placeholder='{"status":"proposed","value":"Synthetic cafe"}'></textarea>
-<label for="status">Action</label><select id="status" name="status"><option value="corrected">Save correction, keep in review queue</option><option value="accepted">Accept resolved event</option><option value="rejected">Reject event (preserve history)</option></select>
+<label for="status">Action</label><select id="status" name="status"><option value="corrected">Save correction, keep in review queue</option><option value="accepted">Accept resolved event</option><option value="rejected">Reject whole event (preserve history; leave field empty)</option></select>
 <button type="submit">Save auditable review revision</button></form></section>
 <section><h2>Immutable revision history</h2>{% for t in history|reverse %}<details><summary>{{ t.revision_id }} - {{ t.recorded_at }} - {{ t.review.status }}</summary><pre>{{ t.model_dump_json(indent=2) }}</pre></details>{% endfor %}</section>
 <p>Next: <a href="/review">return to review queue</a> or refresh this detail before another edit.</p>

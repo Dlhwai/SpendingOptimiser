@@ -194,6 +194,72 @@ def test_contradiction_cannot_accept_until_corrected(ledger, payload):
     assert not needs_review(accepted)
 
 
+def test_rejection_with_conflicts_leaves_queue_and_survives_reimport(ledger, payload):
+    payload["transactions"][0]["merchant"] = {
+        "status": "conflicting",
+        "alternatives": ["Synthetic A", "Synthetic B"],
+        "note": "Ambiguous",
+    }
+    payload["transactions"][0]["amount"] = {
+        "status": "conflicting",
+        "alternatives": [
+            {"currency": "SGD", "minor_units": 100},
+            {"currency": "SGD", "minor_units": 200},
+        ],
+        "note": "Ambiguous",
+    }
+    ledger.import_document(json.dumps(payload))
+    original = ledger.load().transactions[0]
+    assert needs_review(original)
+    rejected = ledger.review(
+        "test-purchase-v1", actor="Synthetic", reason="Not mine", status="rejected"
+    )
+    assert rejected.review.status == "rejected"
+    assert not needs_review(rejected)
+    assert rejected.merchant == original.merchant
+    assert rejected.amount == original.amount
+    assert ledger.import_document(json.dumps(payload)) == {"added": 0, "unchanged": 11}
+    document = Ledger(ledger.path).load()
+    assert heads(document) == [rejected]
+    assert document.transactions[0] == original
+    with pytest.raises(ValueError, match="accepted event needs"):
+        ledger.review(rejected.revision_id, actor="Synthetic", reason="x", status="accepted")
+    assert heads(ledger.load()) == [rejected]
+    page = client_for(ledger.path).get("/review").text
+    assert "0 results" in page and "0 need review" in page
+
+
+def test_rejection_does_not_alter_corrected_fact(ledger, payload):
+    ledger.import_document(json.dumps(payload))
+    corrected = correct(ledger)
+    with pytest.raises(ValueError, match="whole event"):
+        ledger.review(
+            corrected.revision_id,
+            actor="Synthetic",
+            reason="Synthetic",
+            status="rejected",
+            field="merchant",
+            fact_json=json.dumps(proposed("Synthetic other")),
+        )
+    rejected = ledger.review(
+        corrected.revision_id, actor="Synthetic", reason="Synthetic", status="rejected"
+    )
+    assert rejected.merchant == corrected.merchant
+    assert rejected.merchant.review.status == "corrected"
+    assert rejected.corrections == corrected.corrections
+    assert not needs_review(rejected)
+    reopened = ledger.review(
+        rejected.revision_id, actor="Synthetic", reason="Reconsidered", status="accepted"
+    )
+    assert reopened.merchant == corrected.merchant
+    assert [t.review.status for t in ledger.load().transactions] == [
+        "pending",
+        "corrected",
+        "rejected",
+        "accepted",
+    ]
+
+
 @pytest.mark.parametrize(
     "change",
     [

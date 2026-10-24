@@ -66,6 +66,8 @@ def uncertain(transaction: Transaction) -> list[str]:
 
 def needs_review(transaction: Transaction) -> bool:
     # Accepted/rejected reviews close the queue, not the unknown optional fields.
+    if transaction.review.status == "rejected":
+        return False
     return transaction.review.status in {"pending", "corrected"} or any(
         getattr(transaction, name).status == "conflicting" for name in CORRECTION_FIELDS
     )
@@ -190,6 +192,8 @@ class Ledger:
             raise ValueError("Select a field for the replacement fact")
         if status == "corrected" and not field:
             raise ValueError("A correction must change a fact")
+        if status == "rejected" and field:
+            raise ValueError("Rejection applies to the whole event; save corrections separately")
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             document = self._load(db)
