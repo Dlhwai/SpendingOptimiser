@@ -404,7 +404,6 @@ def test_invalid_message_metadata(change):
     assert result.candidate is None and result.error.code == "invalid_message"
 
 
-
 @pytest.mark.parametrize(
     "raw, expected",
     [
@@ -443,6 +442,7 @@ def test_malformed_encoded_subject_is_invalid_message_without_aborting_page():
     assert page.results[0].candidate is not None
     assert page.results[1].candidate is None
     assert page.results[1].error.code == "invalid_message"
+
 
 class Tokens:
     def __init__(self, value="synthetic-token"):
