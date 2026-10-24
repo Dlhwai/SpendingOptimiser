@@ -91,7 +91,10 @@ headers are retained. This adapter performs no DKIM/SPF/DMARC verification.
   invalid values become `None`, with warnings for invalid/ambiguous values.
   **None of these timestamps is a financial event date or posting date.**
 - `headers` preserve selected original values with JSON-pointer locators.
-  `subject` separately decodes RFC2047 encoded words. `parts` contain every
+  `subject` separately decodes RFC2047 encoded words. `sender` is the decoded
+  single untrusted From claim for display only; absent, duplicate or undecodable
+  From headers become `None` with an `ambiguous_sender`/`undecodable_sender`
+  warning and never reject the candidate. `parts` contain every
   inline `text/plain` and `text/html` alternative, with MIME type, payload/body
   locator, normalized text and a digest of the decoded part bytes. A later
   private extractor can cite `EvidenceRef(target="observation",
