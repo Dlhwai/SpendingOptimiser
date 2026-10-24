@@ -1,7 +1,9 @@
 # Schema milestone (format 1.0)
 
-These are Pydantic validation models, not an ingestion service, bank ledger, or
-reward engine. Only Pydantic is a runtime dependency. All examples/fixtures are
+These are Pydantic validation models, not by themselves an ingestion service,
+bank ledger, or reward engine. The package now also includes a separately tested
+[offline local import/review service](local-ledger.md) using FastAPI, SQLite, and
+Jinja2; the domain models themselves depend only on Pydantic. All examples/fixtures are
 synthetic. The three supplied card names are unresolved labels, not verified
 products or a live rules catalog.
 
@@ -170,6 +172,9 @@ References and chronology cannot prove that a quote supports a field, that an
 MCC is correct, that caps use compatible units, or that an extracted condition
 is financially meaningful. These checks are intentionally not a publication gate.
 
-Next: implement a separately tested ingestion/review path and persistence, then
-research exact card variants/terms and validate the descriptive schema against
-verified examples. No live research or real personal data is needed for this milestone.
+The separately tested [local application](local-ledger.md) now enforces immutable
+cross-import identities, atomic SQLite persistence, deduplication of exact reimports,
+and conservative manual-review precedence. These remain application guarantees,
+not changes to the schema semantics. Next: qualify real ingestion adapters, research
+exact card variants/terms, and validate the descriptive schema against verified
+examples. No live research or real personal data is needed for the local milestone.

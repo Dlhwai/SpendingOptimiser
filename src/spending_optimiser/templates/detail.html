@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Event {{ transaction.event_id }}</h2>
+<p>Current revision <code>{{ transaction.revision_id }}</code>; review: <strong>{{ transaction.review.status }}</strong>. {{ history|length }} revisions preserved.</p>
+<p>Uncertain or unresolved fields: {{ uncertain|join(', ') if uncertain else '0 results' }}.</p>
+<p class="warning">Unknown optional fields can remain unknown after acceptance. Acceptance records your review, not verification, bank reconciliation, or reward eligibility. Proposed values are not independently verified. Conflicting fields and missing required values must be resolved before acceptance.</p>
+<table><thead><tr><th>Field</th><th>Status / value / evidence</th></tr></thead><tbody>
+{% for name, fact in facts %}<tr><th>{{ name }}</th><td><strong>{{ fact.status }}</strong>: {{ fact.value if fact.value is not none else 'No selected value' }}
+{% if fact.alternatives %}<p>Alternatives: {{ fact.alternatives|join(', ') }}</p>{% endif %}
+{% if fact.note %}<p>{{ fact.note }}</p>{% endif %}
+{% for ref in fact.evidence %}<p><small>{{ ref.target }} / {{ ref.evidence_revision_id }} / {{ ref.locator }}</small>{% if ref.quote %}<br>{{ ref.quote }}{% endif %}</p>{% endfor %}
+<details><summary>Full fact JSON and review metadata</summary><pre>{{ fact.model_dump_json(indent=2) }}</pre></details></td></tr>{% endfor %}
+</tbody></table>
+<section><h2>Private source evidence</h2><p>Origin observations and observation references across this event's history. Quotes and locators appear with each fact and in revision history. These are imported assertions, not fetched email bodies.</p>
+{% for o in observations %}<pre>{{ o.model_dump_json(indent=2) }}</pre>{% else %}<p>0 results.</p>{% endfor %}
+<h3>Public evidence referenced by this event</h3>{% for e in evidence %}<pre>{{ e.model_dump_json(indent=2) }}</pre>{% else %}<p>0 results.</p>{% endfor %}</section>
+<section><h2>Review or correct one fact</h2><p>Supply a reviewer and reason. To correct a field, choose it and enter its complete replacement Fact JSON. Evidence references must already exist in the ledger. Use integer minor units for money. The original revision and source links remain intact. An unchanged correction is rejected.</p>
+<p>Example merchant fact: <code>{"status":"proposed","value":"Synthetic cafe"}</code>. To retain evidence, include its existing <code>evidence</code> array. Verification requires evidence and is your explicit assertion; this app does not validate source truth.</p>
+<form action="/review" method="post">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="revision_id" value="{{ transaction.revision_id }}">
+<label for="actor">Reviewer</label><input id="actor" name="actor" required maxlength="200" autocomplete="off">
+<label for="reason">Reason</label><input id="reason" name="reason" required maxlength="2000" size="70" autocomplete="off">
+<label for="field">Field to correct (leave empty for review only)</label><select id="field" name="field"><option value="">No field correction</option>{% for name in fields %}<option value="{{ name }}">{{ name }}</option>{% endfor %}</select>
+<label for="fact_json">Replacement Fact JSON (leave empty for review only)</label><textarea id="fact_json" name="fact_json" placeholder='{"status":"proposed","value":"Synthetic cafe"}'></textarea>
+<label for="status">Action</label><select id="status" name="status"><option value="corrected">Save correction, keep in review queue</option><option value="accepted">Accept resolved event</option><option value="rejected">Reject event (preserve history)</option></select>
+<button type="submit">Save auditable review revision</button></form></section>
+<section><h2>Immutable revision history</h2>{% for t in history|reverse %}<details><summary>{{ t.revision_id }} - {{ t.recorded_at }} - {{ t.review.status }}</summary><pre>{{ t.model_dump_json(indent=2) }}</pre></details>{% endfor %}</section>
+<p>Next: <a href="/review">return to review queue</a> or refresh this detail before another edit.</p>
+{% endblock %}
