@@ -2,8 +2,10 @@
 
 This is an offline schema-document importer with a persisted notification-event
 ledger. It is **not** a bank-email parser, Gmail connector, complete bank
-reconciliation, reward calculator, or live card-rule catalog. It makes no network
-or model calls. All bundled data is synthetic, including its unverified card-rule
+reconciliation, reward calculator, or live card-rule catalog. This offline ledger
+workflow makes no network or model calls. The separate [Gmail connection and
+candidate-loading UI](gmail.md) can now make user-authorized Google requests;
+it never imports mail as transactions or alters financial review decisions. All bundled data is synthetic, including its unverified card-rule
 examples. Supplied real card names remain unresolved labels.
 
 ## Setup and one start command
@@ -137,7 +139,7 @@ external scripts/resources; source URLs are displayed as text, not fetched.
 Uploaded bodies are bounded to 2 MiB. There is no model integration or transaction
 telemetry. Tests and smoke validation use only synthetic material.
 
-There is no login, encryption at rest, retention/deletion UI, migrations beyond
+There is no multi-user login, encryption at rest, retention/deletion UI, migrations beyond
 local database format 1, automatic backups, pagination, or production hosting
 support. Do not expose the service through a proxy, LAN bind, or tunnel; the local
 OS user and other software on the machine remain trusted. All database readers
@@ -148,8 +150,9 @@ milestone is intended for small local ledgers, not high-volume workloads.
 
 Evidence checks establish links and chronology, not the truth of a quote or a
 reviewer's financial interpretation. No statement balancing, adaptive extraction,
-Gmail/OAuth, AI calls, scheduling, monthly budget, reward engine, or researched
-card terms are implemented here. Later integration still needs sanitized bank
+AI calls, scheduling, monthly budget, reward engine, or researched card terms are
+implemented here. Gmail OAuth and read-only candidate loading are a separate
+implemented feature, documented in [gmail.md](gmail.md). Later integration still needs sanitized bank
 notification examples, credentials with an agreed privacy boundary, and verified
 product/term information. Those inputs do not block this offline milestone.
 

@@ -2,7 +2,7 @@
 
 A planned personal spending tracker for maximizing credit-card rewards while keeping monthly cash flow and budgets visible.
 
-**Status: foundational schemas, constrained fixture-tested extraction proposals, an offline local import/persistence/review application, and an offline-tested read-only Gmail candidate adapter are implemented. There is no live model integration yet. Live Gmail access requires authorization.**
+**Status: schemas, fixture-tested extraction proposals, local import/persistence/review, and Google sign-in with explicit read-only Gmail loading are implemented. OAuth and retrieval are synthetic end-to-end tested; a live account still requires your Cloud configuration and browser consent. No live model integration or qualified bank-email extraction is implemented.**
 
 ## Project context
 
@@ -20,7 +20,7 @@ A planned personal spending tracker for maximizing credit-card rewards while kee
 
 ## Implemented milestone
 
-An importable `spending_optimiser` package provides typed Pydantic models for transaction revisions, account/card identities, uncertain card rules, source evidence, and self-contained JSON snapshots. It includes synthetic fixtures, round-trip and validation tests, a pinned uv setup, and CI. A local FastAPI browser service now imports these validated snapshots transactionally into SQLite, displays a persisted event ledger, and preserves auditable review/correction revisions. It does not calculate rewards, ingest emails through the service, or reconcile bank statements. A separate [constrained extraction use case](docs/extraction.md) accepts notification data and an injected model callable, validates bounded evidence spans, and returns pending-review proposals using synthetic fixtures. No provider client or qualified real-bank parser is implemented. A separate read-only Gmail adapter lists and retrieves private notification candidates, with pagination, MIME normalization, stable observation identities, and redacted errors. It creates no accepted transactions. The three card names remain unresolved; no real terms have been researched.
+An importable `spending_optimiser` package provides typed Pydantic models for transaction revisions, account/card identities, uncertain card rules, source evidence, and self-contained JSON snapshots. It includes synthetic fixtures, round-trip and validation tests, a pinned uv setup, and CI. A local FastAPI browser service now imports these validated snapshots transactionally into SQLite, displays a persisted event ledger, and preserves auditable review/correction revisions. It does not calculate rewards, extract financial facts from emails, or reconcile bank statements. A separate [constrained extraction use case](docs/extraction.md) accepts notification data and an injected model callable, validates bounded evidence spans, and returns pending-review proposals using synthetic fixtures. No provider client or qualified real-bank parser is implemented. A separate read-only Gmail adapter lists and retrieves private notification candidates, with pagination, MIME normalization, stable observation identities, and redacted errors. It creates no accepted transactions. The three card names remain unresolved; no real terms have been researched.
 
 See [schema usage and limits](docs/schemas.md). Quick start (Python 3.11.9, uv 0.11.8):
 
@@ -42,7 +42,7 @@ uv run --locked spending-optimiser
 Open **http://127.0.0.1:8765**, click **Import bundled synthetic example**, and open
 **Review queue** to inspect evidence and correct/review the purchase. No credentials,
 real financial data, model, or Internet access are needed after dependency installation.
-Refresh rereads the local database, not Gmail.
+Ledger refresh rereads the local database. Gmail has separate Connect and Load/Refresh mail actions; sign-in never loads mail automatically.
 
 Data defaults to `~/.local/share/spending-optimiser/ledger.sqlite3`. Override with
 `--database /absolute/private/path/ledger.sqlite3` or `SPENDING_OPTIMISER_DB`.
@@ -50,7 +50,7 @@ See [local setup, full synthetic walkthrough, storage/review guarantees, and lim
 
 ## Gmail adapter
 
-See [Gmail usage, privacy, limits and future authorized OAuth setup](docs/gmail.md).
+See [exact Google Cloud/client setup, connect/load/disconnect, privacy and limits](docs/gmail.md). Gmail sign-in uses Google's Desktop authorization-code flow with PKCE, native OS credential storage, and a loopback callback. Load a bounded recent-message batch only when you request it; candidates remain separate from validated ledger events.
 Run the synthetic example without credentials or network access:
 
 ```sh
@@ -58,15 +58,17 @@ uv run --locked python examples/gmail_synthetic.py
 ```
 
 Live Gmail and actual bank-notification compatibility have **not** been verified.
-OAuth consent, refresh and OS credential storage remain host responsibilities;
-this adapter does not read or change credential stores.
+The app implements consent, refresh and native-only credential storage; the standalone
+adapter still does not read/change stores. Follow the setup guide to import your
+Desktop client JSON privately with `--configure-google`, then start the app and
+choose **Connect Gmail / load mail**. No credentials are needed for offline imports.
 
 ## Technical direction
 
 One Python service uses FastAPI, SQLite, and server-rendered Jinja2 forms, without
 JavaScript dependencies or a frontend build. The bounded extraction use case and
-read-only Gmail adapter are implemented separately and not yet wired into the
-service. Deterministic financial calculations remain a later capability,
+read-only Gmail adapter remain separate modules; only Gmail authorization and
+candidate retrieval are wired into the service. Mail is not sent to the extractor. Deterministic financial calculations remain a later capability,
 independent of ingestion, model providers, persistence, and UI clients.
 
 ## Privacy

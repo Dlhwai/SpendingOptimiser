@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Connect Gmail on Google's page</h2>
+<p>Authorize Gmail read-only access and a stable OpenID account identity. This app cannot send, delete, or modify mail. Nothing is loaded automatically.</p>
+<p><a href="{{ authorization_url }}" rel="noreferrer">Continue to Google</a></p>
+<p>Use the same browser tab/profile to finish consent within 10 minutes. Do not copy the callback URL into another browser. Cancelling on Google or returning here does not load mail.</p>
+<p><a href="/gmail">Cancel / return to Gmail</a></p>
+{% endblock %}
