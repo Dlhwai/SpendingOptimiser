@@ -1,0 +1,32 @@
+[
+  {
+    "id": "synthetic-purchase",
+    "notification": "Type: Purchase\nAmount: SGD 12.34\nEvent date: 2025-01-02\nMerchant: Test Cafe",
+    "response": {
+      "classification": "transaction",
+      "fields": {
+        "kind": [{"start": 0, "end": 14, "quote": "Type: Purchase"}],
+        "amount": [{"start": 15, "end": 32, "quote": "Amount: SGD 12.34"}],
+        "occurred_on": [{"start": 33, "end": 55, "quote": "Event date: 2025-01-02"}],
+        "posted_on": [],
+        "merchant": [{"start": 56, "end": 75, "quote": "Merchant: Test Cafe"}]
+      }
+    },
+    "expected_minor_units": 1234
+  },
+  {
+    "id": "synthetic-refund",
+    "notification": "Type: Refund\nAmount: SGD 12.34\nEvent date: 2025-01-02\nMerchant: Test Cafe",
+    "response": {
+      "classification": "transaction",
+      "fields": {
+        "kind": [{"start": 0, "end": 12, "quote": "Type: Refund"}],
+        "amount": [{"start": 13, "end": 30, "quote": "Amount: SGD 12.34"}],
+        "occurred_on": [{"start": 31, "end": 53, "quote": "Event date: 2025-01-02"}],
+        "posted_on": [],
+        "merchant": [{"start": 54, "end": 73, "quote": "Merchant: Test Cafe"}]
+      }
+    },
+    "expected_minor_units": 1234
+  }
+]

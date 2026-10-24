@@ -2,7 +2,7 @@
 
 A planned personal spending tracker for maximizing credit-card rewards while keeping monthly cash flow and budgets visible.
 
-**Status: foundational Python schemas implemented and tested. There is no runnable application yet.**
+**Status: foundational Python schemas and constrained, fixture-tested extraction proposals implemented. There is no runnable application or live model integration yet.**
 
 ## Project context
 
@@ -20,7 +20,7 @@ A planned personal spending tracker for maximizing credit-card rewards while kee
 
 ## Implemented milestone
 
-An importable `spending_optimiser` package provides typed Pydantic models for transaction revisions, account/card identities, uncertain card rules, source evidence, and self-contained JSON snapshots. It includes synthetic fixtures, round-trip and validation tests, a pinned uv setup, and CI. It does not calculate rewards, ingest emails, or implement a bank ledger. The three card names remain unresolved; no real terms have been researched.
+An importable `spending_optimiser` package provides typed Pydantic models for transaction revisions, account/card identities, uncertain card rules, source evidence, and self-contained JSON snapshots. It includes synthetic fixtures, round-trip and validation tests, a pinned uv setup, and CI. It does not calculate rewards, fetch emails, or implement a bank ledger. A separate [constrained extraction use case](docs/extraction.md) accepts notification data and an injected model callable, validates bounded evidence spans, and returns pending-review proposals using synthetic fixtures. No provider client or qualified real-bank parser is implemented. The three card names remain unresolved; no real terms have been researched.
 
 See [schema usage and limits](docs/schemas.md). Quick start (Python 3.11.9, uv 0.11.8):
 
@@ -33,7 +33,7 @@ uv run --locked ruff format --check .
 
 ## Proposed technical direction
 
-A modular Python application with FastAPI, SQLite, and a lightweight Jinja2/HTMX dashboard. Keep deterministic financial calculations independent of Gmail, model providers, persistence, and UI clients. Only the Pydantic domain package is implemented; the service, storage, and dashboard stack remains proposed.
+A modular Python application with FastAPI, SQLite, and a lightweight Jinja2/HTMX dashboard. Keep deterministic financial calculations independent of Gmail, model providers, persistence, and UI clients. The Pydantic domain package and bounded extraction use case are implemented; the service, storage, and dashboard stack remains proposed.
 
 ## Privacy
 
