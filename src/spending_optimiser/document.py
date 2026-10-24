@@ -96,12 +96,13 @@ class SchemaDocument(Model):
                 raise ValueError("card needs a known product and account")
             if accounts[card.account_id].kind != "credit_card":
                 raise ValueError("card instance must map to a credit-card account")
+        for public in walk((self.products, self.evidence, self.rules)):
+            if isinstance(public, EvidenceRef) and public.target != "source_evidence":
+                raise ValueError("public records cannot cite private transaction observations")
         for rule in self.rules:
             if rule.product_id not in products:
                 raise ValueError("rule needs a known product")
             for ref in (m for m in walk(rule) if isinstance(m, EvidenceRef)):
-                if ref.target != "source_evidence":
-                    raise ValueError("public rules cannot cite private transaction observations")
                 if sources[ref.evidence_revision_id].retrieved_at > rule.compiled_at:
                     raise ValueError("rule cannot cite evidence retrieved after compilation")
         origin_owners: dict[tuple[str, str], set[str]] = {}

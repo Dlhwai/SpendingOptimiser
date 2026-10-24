@@ -116,9 +116,13 @@ class Transaction(Model):
         identities = [(o.observation_id, o.event_key) for o in self.origins]
         if len(set(identities)) != len(identities):
             raise ValueError("duplicate source event identity within transaction")
-        if self.kind.value != "transfer" and self.transfer_purpose.value is not None:
+        if self.kind.value != "transfer" and (
+            self.transfer_purpose.value is not None or self.transfer_purpose.alternatives
+        ):
             raise ValueError("transfer purpose only applies to a known transfer")
-        if self.kind.value != "income" and self.income_kind.value is not None:
+        if self.kind.value != "income" and (
+            self.income_kind.value is not None or self.income_kind.alternatives
+        ):
             raise ValueError("income kind only applies to known income")
         if self.review.status == "accepted" and any(
             f.status not in {"proposed", "verified"}

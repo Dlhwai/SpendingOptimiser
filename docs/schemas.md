@@ -135,9 +135,10 @@ cap aggregation, promotion qualification or redemption engine is implemented.
 aware retrieval timestamp, source kind, optional disclosed document version and
 SHA-256 content digest, uncertain effective period, and review metadata.
 `EvidenceRef` links a revision and a locator/optional quote. Transaction facts may
-instead cite an observation, using `target: "observation"`; public rules cannot
-cite private observations. Editorial/synthetic evidence can be stored but is not
-authority to publish issuer terms. No fetching or official-source trust policy exists.
+instead cite an observation, using `target: "observation"`; public products,
+evidence and rules cannot cite private observations. Editorial/synthetic
+evidence can be stored but is not authority to publish issuer terms. No fetching
+or official-source trust policy exists.
 
 Both rules and source evidence have an effective-period fact. Each period is
 half-open `[start, end)` in calendar dates, with `None` meaning **unknown**, not

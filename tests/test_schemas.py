@@ -391,7 +391,33 @@ def test_duplicate_cycle_and_unmarked_source_collision(payload):
 def test_public_rules_cannot_cite_private_observations(payload):
     ref = payload["rules"][0]["earning"]["value"][0]["reward"]["evidence"][0]
     ref.update(target="observation", evidence_revision_id="test-observation")
-    with pytest.raises(ValidationError, match="public rules"):
+    with pytest.raises(ValidationError, match="public records"):
+        SchemaDocument.model_validate(payload)
+
+
+@pytest.mark.parametrize("record", ["products", "evidence"])
+def test_public_products_and_evidence_cannot_cite_private_observations(payload, record):
+    private = {"target": "observation", "evidence_revision_id": "test-observation", "locator": "x"}
+    fact = {**proposed("Synthetic"), "evidence": [private]}
+    if record == "products":
+        payload["products"][-1]["issuer"] = fact
+    else:
+        payload["evidence"][0]["effective"]["evidence"] = [private]
+    with pytest.raises(ValidationError, match="public records"):
+        SchemaDocument.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "field,alternatives",
+    [("transfer_purpose", ["own_accounts", "external"]), ("income_kind", ["salary", "other"])],
+)
+def test_kind_gated_facts_reject_conflicting_alternatives(payload, field, alternatives):
+    payload["transactions"][0][field] = {
+        "status": "conflicting",
+        "alternatives": alternatives,
+        "note": "unclear",
+    }
+    with pytest.raises(ValidationError, match="only applies"):
         SchemaDocument.model_validate(payload)
 
 
