@@ -287,9 +287,14 @@ class GmailAdapter:
             if len(subjects) > 1:
                 warnings.append("ambiguous_subject")
             senders = [h.value for h in normalized_headers if h.name == "from"]
-            sender = decoded_header(senders[0]) if len(senders) == 1 else None
+            sender = None
             if len(senders) > 1:
                 warnings.append("ambiguous_sender")
+            elif senders:
+                try:
+                    sender = decoded_header(senders[0])
+                except InvalidMessage:
+                    warnings.append("undecodable_sender")
             dates = [h.value for h in normalized_headers if h.name == "date"]
             sent_at = None
             if dates:

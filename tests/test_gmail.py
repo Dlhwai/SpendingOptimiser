@@ -366,6 +366,20 @@ def test_duplicate_headers_are_preserved_without_authenticity_claims():
     }
 
 
+def test_undecodable_sender_is_unknown_without_rejecting_the_message():
+    msg = message()
+    for header in msg["payload"]["headers"]:
+        if header["name"] == "From":
+            header["value"] = "=?UTF-8?B?/w==?= <alerts@bank.example.invalid>"
+    result = adapter(FakeClient(messages={"m1": msg})).get_candidate("m1")
+    assert result.error is None
+    assert result.candidate.sender is None and result.candidate.subject is not None
+    assert result.candidate.warnings == ("undecodable_sender",)
+    assert [h.value for h in result.candidate.headers if h.name == "from"] == [
+        "=?UTF-8?B?/w==?= <alerts@bank.example.invalid>"
+    ]
+
+
 def test_changed_content_keeps_identity_but_changes_evidence_digest():
     client = FakeClient()
     ingest = adapter(client)
