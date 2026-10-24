@@ -103,7 +103,10 @@ earning spend blocks must be positive. Strings, floats and booleans are rejected
 as minor units. Supported currencies are deliberately bounded: SGD, USD, EUR,
 GBP (2 decimal places), JPY, KRW (0), BHD, KWD (3). Unsupported codes fail rather
 than silently assuming cents. Add explicitly reviewed currency metadata before
-supporting another currency. No major-unit parsing, FX or ledger balancing exists.
+supporting another currency. `Money` itself does no major-unit parsing, FX or ledger
+balancing. The separate [constrained extraction use case](extraction.md) converts
+explicit supported-currency decimal text with integer arithmetic and returns only
+pending-review proposals.
 
 ## Card rules, evidence and history
 
