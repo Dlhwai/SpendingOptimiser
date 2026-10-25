@@ -2,8 +2,8 @@
 
 This follow-up adds a separate **Safe AI analysis** page. Ordinary Gmail loading,
 transaction lookups and financial calculations do not invoke a model. The default
-app is disconnected and needs no AI client. Monthly charts/dashboard work is not
-part of this change.
+app is disconnected and needs no AI client. For saved-data charts, see the
+[deterministic monthly workflow](monthly.md).
 
 ## What is supported
 
@@ -34,8 +34,9 @@ part of this change.
   fetch left running after an import returns. Captures made before the deadline
   are kept. Only
   `text/html`/`text/plain` are read, scripts/styles are dropped and extracted text
-  over 24,000 characters is refused. PDFs, other sites, failed, malformed or oversized
-  documents and searches that hit the request or time budget are shown as unavailable.
+  over 24,000 characters is refused, as is premature EOF in declared-length or chunked
+  HTTP bodies. PDFs, other sites, failed, malformed or oversized documents and searches
+  that hit the request or time budget are shown as unavailable.
 - **Authority.** Only the importer writes terms snapshots. Each stores the issuer,
   final URL, retrieval time, content SHA-256 and exact extracted text; the preview
   fingerprint covers that saved body. Imported ledger `SourceEvidence` and pasted
@@ -48,8 +49,9 @@ part of this change.
   `RuleRevision`/`MinimumSpend` citing the capture with character offsets. Period
   basis, timezone, earning rates, eligibility, applicability, caps and effective dates
   remain unknown. Uncertain answers stay null.
-- Format structures: one line of distinct `<ROLE>` placeholders and words from a fixed
-  vocabulary of common notification words. Names, digits, `@` and raw text are refused.
+- Format structures: one line of distinct `<ROLE>` placeholders, words from a fixed
+  ASCII notification vocabulary and allowlisted punctuation. Unrecognized Unicode
+  characters, controls, names, digits, `@` and raw message text are refused.
   The model maps each placeholder to a fixed role (currency, amount, merchant,
   date_iso, date_dmy, card_suffix), never Python, shell or regex. The app requires every
   placeholder mapped exactly once, then round-trips fictional values through its fixed

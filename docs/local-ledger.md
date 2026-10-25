@@ -49,10 +49,11 @@ material, credentials, screenshots containing financial data, or exports.
    `tests/fixtures/synthetic.json` using **Import a schema document**. Both paths
    run the same validation and persistence code. Paste JSON or upload a file, not
    both; the complete request must fit within 2 MiB including form overhead.
-2. Expect **11 new records**, **1 event**, and **1 queued event**. Counts include
-   public products/evidence/rules and private accounts/cards/observations/events.
-   The purchase is SGD 1234 **minor units** (SGD 12.34). No financial totals or
-   signed bank postings are calculated.
+2. Expect **11 new records** in the import notice. Open **Transactions** to see
+   **1 event** and **1 need review**. Counts include public products/evidence/rules
+   and private accounts/cards/observations/events. The purchase is SGD 1234
+   **minor units** (SGD 12.34). Its monthly inclusion follows the
+   [monthly workflow](monthly.md#inclusion-rules-and-financial-meaning).
 3. Open **Review queue**, then **test-purchase**. Inspect per-field uncertainty,
    evidence locators, the private synthetic observation, and the original history.
    Unknown posting date, merchant, MCC, and other optional values are not inferred.

@@ -93,10 +93,10 @@ headers are retained. This adapter performs no DKIM/SPF/DMARC verification.
   **None of these timestamps is a financial event date or posting date.**
 - `headers` preserve selected original values with JSON-pointer locators.
   `subject` separately decodes RFC2047 encoded words. `sender` is the decoded
-  single untrusted From claim for display only; absent, duplicate or undecodable
-  From headers become `None` with an `ambiguous_sender`/`undecodable_sender`
-  warning and never reject the candidate. `parts` contain every
-  inline `text/plain` and `text/html` alternative, with MIME type, payload/body
+  single untrusted From claim for display only. An absent From header becomes
+  `None` without a warning; duplicate or undecodable From headers become `None`
+  with an `ambiguous_sender`/`undecodable_sender` warning and never reject the candidate.
+  `parts` contain every inline `text/plain` and `text/html` alternative, with MIME type, payload/body
   locator, normalized text and a digest of the decoded part bytes. A later
   private extractor can cite `EvidenceRef(target="observation",
   evidence_revision_id=candidate.observation.observation_id, locator=part.locator)`.
@@ -128,8 +128,9 @@ headers are retained. This adapter performs no DKIM/SPF/DMARC verification.
 No amount, merchant, category/MCC, card product, account mapping, event kind,
 event date, posting date or acceptance is inferred. The adapter creates no
 `Transaction`, `SourceEvidence`, or public card-rule evidence. Never send raw
-mail or candidate content to public research or external models. Model use
-requires a separate explicit privacy opt-in.
+mail or candidate content to public research or external models. For the
+application's model-input boundary, see
+[safe AI privacy and enforcement](subscription-ai.md#privacy-and-enforcement).
 
 Dataclass reprs suppress mail content, message/thread IDs, namespace and page
 tokens. Error codes are allowlisted. This is a logging guard, **not an export

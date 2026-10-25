@@ -58,7 +58,7 @@ and real-bank format compatibility remain unverified.
 
 - Calendar month is `[first day, first day of next month)` by `occurred_on`.
   Posting date, Gmail receipt date, observation time and revision time are never
-  substituted. The default month is the local system calendar month.
+  substituted.
 - Read only the latest canonical revision. Corrections replace prior facts in the
   projection, not in history. All dated decisions appear in the monthly table.
 - Summaries require an accepted event with resolved kind, amount, event date and

@@ -201,7 +201,20 @@ def test_terms_are_app_captured_official_and_formats_allowlisted():
 
 @pytest.mark.parametrize(
     "literal",
-    ["王小明", "José", "مريم", "١", "１２", "\u00a0", "\u200b", "\u202e", "\t", "\r", "\x00", "\x7f"],
+    [
+        "王小明",
+        "José",
+        "مريم",
+        "١",
+        "１２",
+        "\u00a0",
+        "\u200b",
+        "\u202e",
+        "\t",
+        "\r",
+        "\x00",
+        "\x7f",
+    ],
 )
 def test_format_alphabet_is_checked_at_save_and_saved_input_boundaries(app, client, literal):
     ai = app.state.ai

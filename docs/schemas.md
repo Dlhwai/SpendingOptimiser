@@ -142,8 +142,9 @@ SHA-256 content digest, uncertain effective period, and review metadata.
 `EvidenceRef` links a revision and a locator/optional quote. Transaction facts may
 instead cite an observation, using `target: "observation"`; public products,
 evidence and rules cannot cite private observations. Editorial/synthetic
-evidence can be stored but is not authority to publish issuer terms. No fetching
-or official-source trust policy exists.
+evidence can be stored but is not authority to publish issuer terms. Schema
+validation neither fetches documents nor establishes official-source authority;
+the separate [safe AI importer](subscription-ai.md#what-is-supported) owns that boundary.
 
 Both rules and source evidence have an effective-period fact. Each period is
 half-open `[start, end)` in calendar dates, with `None` meaning **unknown**, not
