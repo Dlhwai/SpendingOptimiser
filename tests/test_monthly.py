@@ -423,14 +423,18 @@ def test_bounded_failed_retries_rotate_persisted_order_without_starvation(tmp_pa
     assert len(state["failed"]) == 101 and state["duplicates"] == 0
     assert "coverage is incomplete" in service.notice
     service, _ = connected(path, fake)
-    assert list(service.saved_month(calendar_month("2025-02"))[1]["failed"]) == list(state["failed"])
+    assert list(service.saved_month(calendar_month("2025-02"))[1]["failed"]) == list(
+        state["failed"]
+    )
     for _ in range((len(identities) - 1) // batch):
         candidates, state = load(service, pages=retry_pages, action="retry")
     assert set(candidates) == {identities[-1]}
     assert len(state["failed"]) == 100 and identities[-1] not in state["failed"]
     assert state["seen"] == [identities[-1]]
     assert (state["pages"], state["duplicates"], state["exhausted"]) == (6, 0, True)
-    assert "100 unresolved messages" in service.notice and "coverage is incomplete" in service.notice
+    assert (
+        "100 unresolved messages" in service.notice and "coverage is incomplete" in service.notice
+    )
     assert fake.calls[calls:].count(("get", identities[-1])) == 1
     assert all(kind == "get" for kind, _ in fake.calls[calls:])
     assert other.saved_month(calendar_month("2025-02")) == other_before

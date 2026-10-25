@@ -444,7 +444,10 @@ def test_write_responses_distinguish_commits_from_maintenance_failures(
     elif operation == "review":
         path = "/review"
         fields.update(
-            revision_id="weekly-groceries-v2", actor="Synthetic", reason="Checked", status="rejected"
+            revision_id="weekly-groceries-v2",
+            actor="Synthetic",
+            reason="Checked",
+            status="rejected",
         )
     else:
         path = "/gmail/month"
