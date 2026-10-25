@@ -1,13 +1,11 @@
 """Synthetic-only AI workflow tests. Real enforcement proof is retained in task evidence."""
 
 import hashlib
-import http.client
 import importlib.util
 import io
 import json
 import socket
 import subprocess
-import threading
 import time
 import tomllib
 from datetime import UTC, datetime
@@ -39,7 +37,6 @@ from spending_optimiser.public_terms import (
     FetchProblem,
     discover,
     https_get,
-    read_body,
 )
 from spending_optimiser.transactions import Observation
 from spending_optimiser.web import create_app
@@ -477,50 +474,120 @@ def test_total_import_deadline_ends_retrieval_and_preserves_found_documents():
     assert len(inner.requests) == 3 and not complete
 
 
-@pytest.mark.parametrize(
-    ("prefix", "dribble"),
-    [
-        (b"HTTP/1.1 200 OK\r\n", b"X-Slow: " + b"a" * 200),
-        (
-            b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nTransfer-Encoding: chunked\r\n\r\n",
-            b"0" * 200,
-        ),
-    ],
-)
-def test_slow_dribbling_headers_or_chunks_cannot_outlast_the_import_deadline(
-    monkeypatch, prefix, dribble
-):
-    monkeypatch.setattr(public_terms, "IMPORT_SECONDS", 0.3)
-    monkeypatch.setattr(public_terms, "TIMEOUT", 0.2)
-    server, client = socket.socketpair()
-    stop = threading.Event()
+@pytest.mark.parametrize("phase", ["success", "send", "headers", "chunks"])
+def test_https_transport_enforces_remaining_budget_through_tls(monkeypatch, phase):
+    """Execute HTTPSConnection/HTTPResponse, faking only TCP/TLS and elapsed time.
 
-    def serve():
-        try:
-            server.sendall(prefix)
-            for byte in dribble:
-                if stop.wait(0.05):
-                    break
-                server.sendall(bytes([byte]))
-        except OSError:
-            pass
+    Slow header/chunk-size lines arrive below the inactivity timeout but would
+    take several import budgets without the per-read deadline. No wall-clock race
+    or live network is involved, and HTTP parser errors are normalized by https_get.
+    """
+    monkeypatch.setattr(public_terms, "IMPORT_SECONDS", 1.0)
+    monkeypatch.setattr(public_terms, "TIMEOUT", 0.4)
+    clock = FakeClock()
+    budget = Budget(clock)
+    events, sent = [], []
+    success = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nOK"
+    prefix, dribble = success, b""
+    if phase == "headers":
+        prefix = b"HTTP/1.1 200 OK\r\n"
+        dribble = b"X-Slow: " + b"a" * 200 + b"\r\nContent-Length: 2\r\n\r\nOK"
+    elif phase == "chunks":
+        prefix = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+        dribble = b"0" * 200 + b"1\r\nX\r\n0\r\n\r\n"
 
-    thread = threading.Thread(target=serve, daemon=True)
-    thread.start()
-    budget = Budget()
-    sock = public_terms.deadline_socket(socket.socket, budget)(fileno=client.detach())
-    started = time.monotonic()
-    try:
-        with pytest.raises((FetchProblem, TimeoutError)):
-            response = http.client.HTTPResponse(sock)
-            response.begin()
-            read_body(response, budget)
-    finally:
-        stop.set()
-        sock.close()
-        server.close()
-        thread.join(1)
-    assert time.monotonic() - started < public_terms.IMPORT_SECONDS + 0.2
+    class FakeSocket:
+        def __init__(self, raw=None):
+            self.timeout = raw.timeout if raw else None
+            self.prefix, self.dribble, self.closed = prefix, dribble, False
+
+        def settimeout(self, value):
+            self.timeout = value
+
+        def wait(self, delay):
+            if self.timeout is not None and delay > self.timeout:
+                clock.now += self.timeout
+                raise TimeoutError("synthetic transport timeout")
+            clock.now += delay
+
+        def sendall(self, data):
+            self.wait(0.3 if phase == "send" else 0.01)
+            sent.append(data)
+
+        def recv_into(self, target):
+            if self.prefix:
+                data, self.prefix = self.prefix[: len(target)], self.prefix[len(target) :]
+            elif self.dribble:
+                self.wait(0.03)
+                data, self.dribble = self.dribble[:1], self.dribble[1:]
+            else:
+                return 0
+            target[: len(data)] = data
+            return len(data)
+
+        def makefile(self, mode):
+            assert mode == "rb"
+            sock = self
+
+            class Reader(io.RawIOBase):
+                def readable(self):
+                    return True
+
+                def readinto(self, target):
+                    return sock.recv_into(target)
+
+            return io.BufferedReader(Reader())
+
+        def close(self):
+            self.closed = True
+
+    raw = FakeSocket()
+    wrapped = []
+
+    def resolve(host, port, *, type):
+        assert host == "www.dbs.com.sg" and port == 443 and type == socket.SOCK_STREAM
+        clock.now += 0.7  # DNS is OS-bounded, but time already spent reduces TCP allowance.
+        return [(None, None, None, None, ("8.8.8.8", port))]
+
+    def connect(address, timeout):
+        assert address == ("8.8.8.8", 443)
+        assert timeout == pytest.approx(budget.remaining())
+        raw.settimeout(timeout)
+        clock.now += 0.1
+        events.append("connect")
+        return raw
+
+    class FakeTLSContext:
+        sslsocket_class = FakeSocket
+        verify_mode = public_terms.ssl.CERT_REQUIRED
+        check_hostname = True
+
+        def wrap_socket(self, sock, *, server_hostname):
+            assert sock is raw and server_hostname == "www.dbs.com.sg"
+            # TCP took time: Pinned.connect must re-bound the TLS handshake.
+            assert sock.timeout == pytest.approx(budget.remaining())
+            clock.now += 0.05
+            result = self.sslsocket_class(sock)
+            wrapped.append(result)
+            events.append("tls")
+            return result
+
+    monkeypatch.setattr(public_terms.socket, "create_connection", connect)
+    monkeypatch.setattr(public_terms.ssl, "SSLSocket", FakeSocket)
+    monkeypatch.setattr(public_terms.ssl, "create_default_context", FakeTLSContext)
+    if phase == "success":
+        assert https_get(DBS + "dbs-yuu-terms", budget, resolve=resolve) == (
+            200,
+            {"content-type": "text/plain", "content-length": "2"},
+            b"OK",
+        )
+        assert sent and b"GET /personal/cards/credit-cards/dbs-yuu-terms HTTP/1.1" in sent[0]
+    else:
+        with pytest.raises(FetchProblem):
+            https_get(DBS + "dbs-yuu-terms", budget, resolve=resolve)
+        assert clock.now == pytest.approx(budget.deadline)
+    assert events == ["connect", "tls"]
+    assert len(wrapped) == 1 and wrapped[0].closed
 
 
 def test_import_timeout_keeps_safe_captures_and_never_starts_ai(app, client, monkeypatch):

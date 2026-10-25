@@ -1,8 +1,9 @@
 """Explicit, bounded retrieval of public terms from a closed set of official issuer origins.
 
 Not a crawler, search broker or monitor: it runs only inside an explicit import request,
-makes at most MAX_FETCHES same-issuer HTTPS requests (redirects included) within
-IMPORT_SECONDS, and sends no query anywhere.
+makes at most MAX_FETCHES same-issuer HTTPS requests (redirects included) with a
+shared IMPORT_SECONDS socket-I/O deadline, and sends no query anywhere. System
+hostname resolution uses the OS resolver's timeout and can exceed that deadline.
 """
 
 import http.client

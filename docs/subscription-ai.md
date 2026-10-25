@@ -17,7 +17,7 @@ part of this change.
   `www.maybank2u.com.sg`, Trust Bank `trustbank.sg`), each with official start pages.
   On an explicit **Find and capture official terms** request, the app follows
   same-issuer links best-first from those pages, making at most 8 HTTPS requests
-  (redirects included) within 45 seconds in total, and
+  (redirects included) under a shared 45-second socket-I/O deadline, and
   captures pages whose own text contains your product words and "terms"/"conditions".
   Your words are matched locally and never sent as a search query. Nothing runs on
   page views or timers. New or changed documents need no code change; a newer capture
@@ -28,7 +28,11 @@ part of this change.
   address. No proxy, cookies, authorization or session headers. Bodies are read in
   chunks capped at 2 MiB. Every connect, TLS handshake, send and socket read (status
   line, headers, chunk sizes and body) waits at most 15 s and never past the import's
-  45-second deadline. Captures made before the deadline are kept. Only
+  45-second deadline. System hostname resolution uses the OS resolver's timeout,
+  not an interruptible app deadline, so a stalled lookup can exceed 45 seconds;
+  after it returns, an expired budget prevents connecting. There is no background
+  fetch left running after an import returns. Captures made before the deadline
+  are kept. Only
   `text/html`/`text/plain` are read, scripts/styles are dropped and extracted text
   over 24,000 characters is refused. PDFs, other sites, failed, malformed or oversized
   documents and searches that hit the request or time budget are shown as unavailable.
