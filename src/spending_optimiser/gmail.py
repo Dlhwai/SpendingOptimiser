@@ -186,6 +186,7 @@ class Candidate:
     headers: tuple[Header, ...] = field(repr=False)
     parts: tuple[TextPart, ...] = field(repr=False)
     subject: str | None = field(repr=False)
+    sender: str | None = field(repr=False)  # untrusted From claim, None if absent/ambiguous
     warnings: tuple[str, ...] = ()
 
     @property
@@ -210,7 +211,11 @@ class CandidatePage:
     results: tuple[MessageResult, ...] = field(default=(), repr=False)
     next_page_token: str | None = field(default=None, repr=False)
     error: IngestionError | None = None
-    duplicate_count: int = 0
+    duplicate_ids: tuple[str, ...] = field(default=(), repr=False)
+
+    @property
+    def duplicate_count(self) -> int:
+        return len(self.duplicate_ids)
 
     @property
     def successful(self) -> bool:
@@ -285,6 +290,15 @@ class GmailAdapter:
             warnings = []
             if len(subjects) > 1:
                 warnings.append("ambiguous_subject")
+            senders = [h.value for h in normalized_headers if h.name == "from"]
+            sender = None
+            if len(senders) > 1:
+                warnings.append("ambiguous_sender")
+            elif senders:
+                try:
+                    sender = decoded_header(senders[0])
+                except InvalidMessage:
+                    warnings.append("undecodable_sender")
             dates = [h.value for h in normalized_headers if h.name == "date"]
             sent_at = None
             if dates:
@@ -320,6 +334,7 @@ class GmailAdapter:
                     normalized_headers,
                     parts,
                     subject,
+                    sender,
                     tuple(warnings),
                 ),
             )
@@ -369,12 +384,12 @@ class GmailAdapter:
             return CandidatePage(error=IngestionError("invalid_response"))
         seen = set(seen_ids)
         results = []
-        duplicates = 0
+        duplicates = []
         for item in messages:
             message_id = item["id"]
             if message_id in seen:
-                duplicates += 1
+                duplicates.append(message_id)
                 continue
             seen.add(message_id)
             results.append(self.get_candidate(message_id))
-        return CandidatePage(tuple(results), token, duplicate_count=duplicates)
+        return CandidatePage(tuple(results), token, duplicate_ids=tuple(duplicates))

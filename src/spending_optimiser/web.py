@@ -1,4 +1,4 @@
-"""Loopback-only ledger and explicit read-only Gmail loading. No model integrations."""
+"""Loopback ledger, explicit Gmail loading and safe-snapshot-only remote analysis."""
 
 import argparse
 import hmac
@@ -8,6 +8,7 @@ import secrets
 import sqlite3
 import sys
 import threading
+from copy import copy
 from importlib.resources import files
 from pathlib import Path
 from urllib.parse import urlencode
@@ -23,11 +24,18 @@ from starlette.exceptions import HTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from .ai_inputs import digest
+from .ai_service import AIService
+from .codex_client import MESSAGES as AI_MESSAGES
+from .codex_client import AIProblem
 from .common import EvidenceRef
 from .document import walk
 from .gmail_auth import MESSAGES, GmailProblem, NativeStore, configure_google
 from .gmail_service import GmailService
 from .ledger import CORRECTION_FIELDS, Conflict, Ledger, heads, needs_review, uncertain
+from .monthly import SINGAPORE, calendar_month, format_money, grouping, monthly_report
+from .public_terms import ISSUERS
+from .storage import Storage
 
 MAX_BODY = 2 * 1024 * 1024
 DEFAULT_DB = Path.home() / ".local" / "share" / "spending-optimiser" / "ledger.sqlite3"
@@ -91,15 +99,25 @@ class LocalBoundary:
         await self.app(scope, receive, secured)
 
 
-def create_app(database: str | Path | None = None, *, gmail_service=None) -> FastAPI:
+def create_app(
+    database: str | Path | None = None, *, gmail_service=None, ai_service=None, codex_client=None
+) -> FastAPI:
     ledger = Ledger(database or os.environ.get("SPENDING_OPTIMISER_DB", DEFAULT_DB))
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.ledger = ledger
     gmail = gmail_service if gmail_service is not None else GmailService(ledger.path)
     app.state.gmail = gmail
+    ai = ai_service if ai_service is not None else AIService(ledger, binary=codex_client)
+    app.state.ai = ai
+    app.add_event_handler("shutdown", ai.close)
+    storage = Storage(ledger)
+    app.state.storage = storage
+    app.state.storage_result = None
     gmail_lock = threading.Lock()
     csrf = secrets.token_urlsafe(32)
     templates = Jinja2Templates(directory=str(files("spending_optimiser").joinpath("templates")))
+    templates.env.globals["money"] = format_money
+    templates.env.globals["singapore"] = SINGAPORE
     # Only an opaque session ID goes in this signed, HttpOnly cookie. Lax permits
     # Google's top-level callback GET; existing mutation CSRF cookie stays Strict.
     app.add_middleware(
@@ -116,7 +134,13 @@ def create_app(database: str | Path | None = None, *, gmail_service=None) -> Fas
         response = templates.TemplateResponse(
             request=request,
             name=name,
-            context={"csrf": csrf, **context},
+            context={
+                "csrf": csrf,
+                "maintenance_warning": (
+                    ledger.maintenance_warning or gmail.cache.ledger.maintenance_warning
+                ),
+                **context,
+            },
             status_code=status_code,
         )
         response.set_cookie("ledger_csrf", csrf, httponly=True, samesite="strict")
@@ -166,6 +190,12 @@ def create_app(database: str | Path | None = None, *, gmail_service=None) -> Fas
             message = str(exc)
         return render(request, "error.html", status_code=code, message=message)
 
+    @app.exception_handler(HTTPException)
+    async def request_error(request, exc):
+        response = render(request, "error.html", status_code=exc.status_code, message=exc.detail)
+        response.headers.update(exc.headers or {})
+        return response
+
     @app.exception_handler(sqlite3.Error)
     async def storage_error(request, exc):
         return render(
@@ -173,7 +203,8 @@ def create_app(database: str | Path | None = None, *, gmail_service=None) -> Fas
             "error.html",
             status_code=503,
             message=(
-                "Local database unavailable; no partial changes saved. Check disk/access and retry."
+                "Local database unavailable; failed writes are rolled back. "
+                "Earlier completed mail pages remain saved. Check disk/access and retry."
             ),
         )
 
@@ -188,9 +219,62 @@ def create_app(database: str | Path | None = None, *, gmail_service=None) -> Fas
                 return None
 
     @app.get("/gmail", response_class=HTMLResponse)
-    async def gmail_page(request: Request):
+    def gmail_page(request: Request):
         request.session.setdefault("id", secrets.token_urlsafe(32))
-        return render(request, "gmail.html", gmail=gmail, messages=MESSAGES)
+        month = calendar_month(request.query_params.get("month"))
+        view = copy(gmail)  # one account identity per rendered response, even during switches
+        candidates, scan = view.saved_month(month)
+        return render(
+            request,
+            "gmail.html",
+            gmail=view,
+            messages=MESSAGES,
+            month=month,
+            candidates=candidates,
+            scan=scan,
+            matches=ai.format_proposals(candidates) if view.connection else {},
+            archived=storage.mail_archived(view.namespace, month),
+        )
+
+    @app.get("/storage", response_class=HTMLResponse)
+    def storage_page(request: Request):
+        month = calendar_month(request.query_params.get("month"))
+        return render(
+            request,
+            "storage.html",
+            storage=storage.status(),
+            result=app.state.storage_result,
+            gmail=copy(gmail),
+            month=month,
+        )
+
+    @app.post("/storage/compress")
+    async def storage_compress(request: Request):
+        await form_data(request, set())
+        app.state.storage_result = await run_in_threadpool(storage.compress_if_needed)
+        for owner in (ledger, gmail.cache.ledger):
+            owner.maintenance_warning = app.state.storage_result.get("warning")
+        return RedirectResponse("/storage", status_code=303)
+
+    @app.post("/storage/restore")
+    async def storage_restore(request: Request):
+        form = await form_data(request, {"month", "connection_id"})
+        month = calendar_month(text_field(form, "month"))
+        connection_id = text_field(form, "connection_id")
+
+        def restore():
+            if gmail.connection is None or not secrets.compare_digest(
+                connection_id.encode(), gmail.connection_id.encode()
+            ):
+                raise HTTPException(409, "Account changed; reload before restoring saved mail")
+            restored = storage.restore_mail(gmail.namespace, month)
+            gmail.notice_month = month.key
+            gmail.notice = (
+                f"Restored {restored} saved mail versions for {month.label}. No mail fetched."
+            )
+
+        await run_in_threadpool(gmail_operation, restore)
+        return RedirectResponse("/gmail?" + urlencode({"month": month.key}), status_code=303)
 
     @app.post("/gmail/connect", response_class=HTMLResponse)
     async def gmail_connect(request: Request):
@@ -242,35 +326,172 @@ def create_app(database: str | Path | None = None, *, gmail_service=None) -> Fas
         await run_in_threadpool(gmail_operation, gmail.disconnect)
         return RedirectResponse("/gmail", status_code=303)
 
-    @app.post("/gmail/load")
-    async def gmail_load(request: Request):
-        form = await form_data(request, {"days", "limit", "connection_id"})
+    @app.post("/gmail/month")
+    async def gmail_month(request: Request):
+        form = await form_data(request, {"month", "pages", "connection_id", "action"})
         try:
-            days, limit = int(text_field(form, "days")), int(text_field(form, "limit"))
+            pages = int(text_field(form, "pages"))
         except ValueError:
-            raise HTTPException(422, "Choose numeric range and limit") from None
+            raise HTTPException(422, "Choose 1-5 pages per action") from None
+        month = calendar_month(text_field(form, "month"))
         await run_in_threadpool(
-            gmail_operation, gmail.load, days, limit, text_field(form, "connection_id")
+            gmail_operation,
+            gmail.load_month,
+            month.key,
+            pages,
+            text_field(form, "connection_id"),
+            text_field(form, "action"),
         )
-        return RedirectResponse("/gmail", status_code=303)
+        return RedirectResponse("/gmail?" + urlencode({"month": month.key}), status_code=303)
+
+    def ai_operation(action, *args):
+        try:
+            result = action(*args)
+            ai.problem = None
+            return result
+        except AIProblem as exc:
+            ai.problem = exc.code
+            if exc.code in {"timeout", "connection_failed", "unsafe_configuration"}:
+                ai.close()
+            return None
+        except OSError:
+            ai.close()
+            ai.problem = "connection_failed"
+            return None
+
+    @app.get("/ai", response_class=HTMLResponse)
+    def ai_page(request: Request, snapshot: str = ""):
+        preview = ai.preview(snapshot) if snapshot else None
+        return render(
+            request,
+            "ai.html",
+            ai=ai,
+            messages=AI_MESSAGES,
+            issuers=ISSUERS,
+            snapshots=ai.snapshots(),
+            selected=snapshot,
+            preview=preview,
+            fingerprint=digest(preview) if preview else None,
+            proposals=ai.proposals(),
+        )
+
+    @app.post("/ai/connect")
+    async def ai_connect(request: Request):
+        await form_data(request, set())
+        if request.url.hostname != "127.0.0.1" or request.url.scheme != "http":
+            raise HTTPException(400, "Use the app's http://127.0.0.1 loopback address to connect")
+        await run_in_threadpool(ai_operation, ai.connect)
+        return RedirectResponse("/ai", 303)
+
+    @app.post("/ai/confirm")
+    async def ai_confirm(request: Request):
+        await form_data(request, set())
+        await run_in_threadpool(ai_operation, ai.confirm)
+        return RedirectResponse("/ai", 303)
+
+    @app.post("/ai/disconnect")
+    async def ai_disconnect(request: Request):
+        await form_data(request, set())
+        await run_in_threadpool(ai_operation, ai.disconnect)
+        return RedirectResponse("/ai", 303)
+
+    @app.post("/ai/save")
+    async def ai_save(request: Request):
+        form = await form_data(request, {"content"})
+        identity = await run_in_threadpool(ai.save_format, text_field(form, "content"))
+        return RedirectResponse("/ai?" + urlencode({"snapshot": identity}), 303)
+
+    @app.post("/ai/import")
+    async def ai_import(request: Request):
+        form = await form_data(request, {"issuer", "query"})
+        await run_in_threadpool(
+            ai.import_terms, text_field(form, "issuer"), text_field(form, "query")
+        )
+        return RedirectResponse("/ai", 303)
+
+    @app.post("/ai/analyse")
+    async def ai_analyse(request: Request):
+        form = await form_data(request, {"snapshot_id", "fingerprint", "connection_id", "consent"})
+        identity = await run_in_threadpool(
+            ai_operation,
+            ai.analyse,
+            *(
+                text_field(form, name)
+                for name in ("snapshot_id", "fingerprint", "connection_id", "consent")
+            ),
+        )
+        return RedirectResponse(
+            "/ai/proposal?" + urlencode({"id": identity}) if identity else "/ai", 303
+        )
+
+    @app.get("/ai/proposal", response_class=HTMLResponse)
+    def ai_proposal(request: Request, id: str):
+        record = ai.find_proposal(id)
+        if record is None:
+            raise HTTPException(404, "Proposal is missing or belongs to another connection")
+        return render(
+            request,
+            "ai_review.html",
+            ai=ai,
+            record=record,
+            rendered=json.dumps(record["result"], indent=2),
+        )
+
+    @app.post("/ai/review")
+    async def ai_review(request: Request):
+        form = await form_data(request, {"proposal_id", "action"})
+        await run_in_threadpool(
+            ai_operation, ai.review, text_field(form, "proposal_id"), text_field(form, "action")
+        )
+        return RedirectResponse("/ai", 303)
 
     @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request):
+    def index(request: Request):
+        document = ledger.load()
+        month = calendar_month(request.query_params.get("month"))
+        view = copy(gmail)
+        candidates, scan = view.saved_month(month)
+        return render(
+            request,
+            "overview.html",
+            month=month,
+            report=monthly_report(document, month),
+            candidates=candidates,
+            scan=scan,
+            added=request.query_params.get("added"),
+            unchanged=request.query_params.get("unchanged"),
+            gmail=view,
+        )
+
+    @app.get("/ledger", response_class=HTMLResponse)
+    def ledger_page(request: Request):
         document = ledger.load()
         transactions = heads(document)
+        month = (
+            calendar_month(request.query_params["month"])
+            if "month" in request.query_params
+            else None
+        )
+        if month:
+            transactions = [row["transaction"] for row in monthly_report(document, month)["rows"]]
         return render(
             request,
             "ledger.html",
             transactions=transactions,
             review_count=sum(needs_review(t) for t in transactions),
             revision_count=len(document.transactions),
-            added=request.query_params.get("added"),
-            unchanged=request.query_params.get("unchanged"),
             review_only=False,
+            month=month,
+            selected_month=month or calendar_month(),
+            groups={t.event_id: grouping(document, t)[1] for t in transactions},
         )
 
+    @app.get("/imports", response_class=HTMLResponse)
+    async def imports_page(request: Request):
+        return render(request, "imports.html")
+
     @app.get("/review", response_class=HTMLResponse)
-    async def queue(request: Request):
+    def queue(request: Request):
         document = ledger.load()
         transactions = [t for t in heads(document) if needs_review(t)]
         return render(
@@ -284,7 +505,7 @@ def create_app(database: str | Path | None = None, *, gmail_service=None) -> Fas
         )
 
     @app.get("/transaction", response_class=HTMLResponse)
-    async def detail(request: Request, event_id: str):
+    def detail(request: Request, event_id: str):
         document = ledger.load()
         history = [t for t in document.transactions if t.event_id == event_id]
         transaction = next((t for t in heads(document) if t.event_id == event_id), None)
@@ -324,7 +545,7 @@ def create_app(database: str | Path | None = None, *, gmail_service=None) -> Fas
                 raise HTTPException(422, "file must be an uploaded JSON document")
             if not text.strip():
                 raise HTTPException(422, "Select a JSON file or paste a schema document")
-            return import_result(text)
+            return await run_in_threadpool(import_result, text)
         finally:
             await form.close()
 
@@ -332,20 +553,20 @@ def create_app(database: str | Path | None = None, *, gmail_service=None) -> Fas
     async def example(request: Request):
         await form_data(request, set())
         text = files("spending_optimiser").joinpath("examples/synthetic.json").read_text()
-        return import_result(text)
+        return await run_in_threadpool(import_result, text)
 
     @app.post("/review")
     async def review(request: Request):
         fields = {"revision_id", "actor", "reason", "status", "field", "fact_json"}
         form = await form_data(request, fields)
         values = {name: text_field(form, name) for name in fields}
-        transaction = ledger.review(**values)
+        transaction = await run_in_threadpool(ledger.review, **values)
         return RedirectResponse(
             "/transaction?" + urlencode({"event_id": transaction.event_id}), status_code=303
         )
 
     @app.get("/public", response_class=HTMLResponse)
-    async def public(request: Request):
+    def public(request: Request):
         document = ledger.load()
         return render(
             request,
@@ -371,6 +592,11 @@ def main():
         "--database", type=Path, help=f"SQLite path (default: {DEFAULT_DB}; env supported)"
     )
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument(
+        "--codex-client",
+        type=Path,
+        help="Opt in to the proof-qualified official Codex binary; see docs/subscription-ai.md",
+    )
     args = parser.parse_args()
     if args.configure_google:
         try:
@@ -391,7 +617,7 @@ def main():
     if not 1 <= args.port <= 65535:
         parser.error("port must be between 1 and 65535")
     uvicorn.run(
-        create_app(args.database),
+        create_app(args.database, codex_client=args.codex_client),
         host="127.0.0.1",
         port=args.port,
         proxy_headers=False,

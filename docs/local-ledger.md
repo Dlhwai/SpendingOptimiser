@@ -44,20 +44,23 @@ material, credentials, screenshots containing financial data, or exports.
 
 ## Complete synthetic browser workflow
 
-1. On **Ledger**, click **Import bundled synthetic example**. This imports the
-   exact synthetic schema fixture bundled with the package. Alternatively, upload
+1. From the **Overview**, open **Import data** and click **Import bundled synthetic
+   example**. This imports the exact synthetic schema fixture bundled with the package. Alternatively, upload
    `tests/fixtures/synthetic.json` using **Import a schema document**. Both paths
    run the same validation and persistence code. Paste JSON or upload a file, not
    both; the complete request must fit within 2 MiB including form overhead.
-2. Expect **11 new records**, **1 event**, and **1 queued event**. Counts include
+2. Expect **11 new records** in the import notice. Open **Transactions > All saved
+   records** for **1 event** needing review; Overview defaults to the current
+   month, while this fixture's event is dated January 2025. Import counts include
    public products/evidence/rules and private accounts/cards/observations/events.
-   The purchase is SGD 1234 **minor units** (SGD 12.34). No financial totals or
-   signed bank postings are calculated.
+   The purchase is SGD 1234 **minor units** (SGD 12.34). See the [monthly inclusion
+   rules](monthly.md#inclusion-rules-and-financial-meaning) for summary eligibility.
 3. Open **Review queue**, then **test-purchase**. Inspect per-field uncertainty,
    evidence locators, the private synthetic observation, and the original history.
    Unknown posting date, merchant, MCC, and other optional values are not inferred.
-4. Enter a reviewer and reason. Choose `merchant` and paste the following complete
-   replacement Fact JSON:
+4. Choose **Review this event**, enter a reviewer and reason, and expand **Correct
+   a fact (optional, advanced JSON)**. Choose `merchant` and paste the following
+   complete replacement Fact JSON:
 
    ```json
    {"status":"proposed","value":"Synthetic cafe"}
@@ -71,16 +74,35 @@ material, credentials, screenshots containing financial data, or exports.
 5. On the refreshed detail page, enter a reviewer and reason again, leave the
    correction field and JSON empty, select **Accept resolved event**, and submit.
    Expect a third review revision and **0 results** in the review queue.
-6. Return to Ledger and reimport the bundled example. Expect **0 new records**,
+6. Return to **Import data** and reimport the bundled example. Expect **0 new records**,
    **11 unchanged records**, one canonical event, and the manual merchant still
    present. Stop and restart the service with the same database path; all three
    transaction revisions and the accepted head remain.
 
-**Ledger / refresh local data** rereads SQLite. It never pretends to fetch Gmail.
-The separate **Public card evidence** view excludes private accounts,
+**Transactions > Refresh local data** rereads SQLite. It never pretends to fetch Gmail.
+The separate **Card evidence** view excludes private accounts,
 observations, transaction quotes, and correction histories. Public evidence
 referenced by a transaction is visible in its detail, while private observations
 cannot be referenced by public records under the existing schema validation.
+
+## Workspace navigation
+
+- **Overview**: calendar-month canonical transactions, decision counts, separate
+  currency/kind magnitudes, purchase grouping and daily charts, with exclusions.
+  All data comes from saved records, never page-triggered retrieval or AI.
+- **Mail inbox**: one-time setup guidance, Connect/Restore, explicit bounded month
+  Load/Continue/Refresh, persistent account-scoped candidates and retrieval state.
+  Mail stays separate from ledger events. See [monthly workflow](monthly.md).
+- **Transactions**: all canonical ledger events, including accepted/rejected ones.
+  Open an event for facts, source evidence, review/correction and immutable history.
+- **Review queue**: events needing a decision. Reviewer, reason and action are
+  primary; complete Fact JSON correction is available in an optional disclosure.
+- **Import data** and **Card evidence**: advanced snapshot import and public
+  reference data, separate from the main onboarding journey.
+
+The interface uses local system fonts, server-rendered semantic forms, visible
+keyboard focus and responsive layouts without scripts, remote assets or a frontend
+build. See the README's disposable synthetic preview for safe UI exploration.
 
 ## Persistence and review contract
 
@@ -101,7 +123,9 @@ cannot be referenced by public records under the existing schema validation.
   Different content under an existing immutable identity yields HTTP 409, never a
   replacement. Cross-import source collisions, history forks, multiple roots,
   dangling links, and other combined-document conflicts also yield 409. Invalid
-  standalone documents yield 422. Database failures yield 503 with no partial save.
+  standalone documents yield 422. Pre-commit database failures yield 503 with no
+  partial import/review save. For post-commit maintenance warnings, see
+  [storage safety and recovery](storage.md#safety-and-migration).
 - Only a validated linear chain's latest transaction revision is shown as the
   ledger event. Older revisions remain available in detail history. Explicit
   `duplicate_of` links are retained and labeled, not silently merged or totaled.
@@ -136,20 +160,24 @@ Rendered imports are escaped. All state changes are POST forms with a server
 nonce plus HttpOnly, SameSite=Strict cookie; cross-origin mutations and untrusted
 Host names are rejected. Forms expire on restart. Responses disable caching and
 external scripts/resources; source URLs are displayed as text, not fetched.
-Uploaded bodies are bounded to 2 MiB. There is no model integration or transaction
-telemetry. Tests and smoke validation use only synthetic material.
+Uploaded bodies are bounded to 2 MiB. This ledger workflow makes no model calls or
+transaction telemetry. The separate [safe-reference AI workflow](subscription-ai.md)
+never receives imported private data. Tests and smoke validation use synthetic material.
 
-There is no multi-user login, encryption at rest, retention/deletion UI, migrations beyond
-local database format 1, automatic backups, pagination, or production hosting
-support. Do not expose the service through a proxy, LAN bind, or tunnel; the local
-OS user and other software on the machine remain trusted. All database readers
+There is no multi-user login, application-level encryption at rest, deletion UI,
+automatic backups, ledger-table pagination, or production hosting support.
+See [Storage & archives](storage.md) for compression, saved-month restoration,
+database migration and post-write maintenance. Do not expose the service through
+a proxy, LAN bind, or tunnel; the local OS user and other software on the machine
+remain trusted. All database readers
 can see private material. For a backup, stop the service and copy the database
 (and any SQLite sidecars if present) to a private location. Protect backups like
 financial source data. Large histories are loaded as one document, so this
 milestone is intended for small local ledgers, not high-volume workloads.
 
 Evidence checks establish links and chronology, not the truth of a quote or a
-reviewer's financial interpretation. No statement balancing, adaptive extraction,
+reviewer's financial interpretation. Deterministic monthly saved-data projections are documented in [monthly.md](monthly.md).
+No statement balancing, adaptive extraction,
 AI calls, scheduling, monthly budget, reward engine, or researched card terms are
 implemented here. Gmail OAuth and read-only candidate loading are a separate
 implemented feature, documented in [gmail.md](gmail.md). Later integration still needs sanitized bank

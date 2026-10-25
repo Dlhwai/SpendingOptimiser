@@ -1,22 +1,10 @@
 {% extends 'base.html' %}
+{% from 'components.html' import transactions_table %}
+{% block title %}{{ 'Review queue' if review_only else 'Transactions' }}{% endblock %}
 {% block content %}
-<h2>{{ 'Review queue' if review_only else 'Persisted ledger' }}</h2>
-<p>{{ transactions|length }} {{ 'queued events' if review_only else 'events' }}; {{ review_count }} need review; {{ revision_count }} historical transaction revisions.</p>
-{% if added is not none %}<p class="notice">Import saved: {{ added }} new records; {{ unchanged }} unchanged records. All linked schema collections are included in these counts.</p>{% endif %}
-{% if transactions %}<table><thead><tr><th>Event</th><th>Kind / date</th><th>Amount magnitude</th><th>Review</th></tr></thead><tbody>
-{% for t in transactions %}<tr><td><a href="{{ '/transaction?event_id=' ~ (t.event_id|urlencode) }}">{{ t.event_id }}</a>{% if t.duplicate_of %}<br>Explicit duplicate of {{ t.duplicate_of }}{% endif %}</td>
-<td>{{ t.kind.value or t.kind.status }}<br>{{ t.occurred_on.value or t.occurred_on.status }}</td>
-<td>{% if t.amount.value %}{{ t.amount.value.currency }} {{ t.amount.value.minor_units }} minor units{% else %}{{ t.amount.status }}{% endif %}<br><small>{{ t.amount.status }}; not a signed bank posting</small></td><td>{{ t.review.status }}</td></tr>{% endfor %}
-</tbody></table>{% else %}<p class="notice">0 results. {{ 'No events currently require review.' if review_only else 'Import a schema document below to begin.' }}</p>{% endif %}
-{% if not review_only %}
-<section><h2>Import a schema document</h2><p>Self-contained format 1.0 JSON only, at most 2 MiB including form overhead. This is a snapshot importer, not an email parser. A failed import saves nothing; duplicate identities must match exactly. Locally reviewed events cannot be extended by later imports.</p>
-<form action="/import" method="post" enctype="multipart/form-data">
-<input type="hidden" name="csrf" value="{{ csrf }}">
-<label for="file">JSON file (or paste below, not both)</label><input id="file" name="file" type="file" accept=".json,application/json">
-<label for="document">Schema-document JSON</label><textarea id="document" name="document" placeholder='{"schema_version":"1.0", "transactions":[]}'></textarea>
-<button type="submit">Import document atomically</button></form>
-<h3>Synthetic offline example</h3><p>Bundled, entirely synthetic test data, with one reviewable purchase and unverified public card-rule examples. No credentials or external connections required. Named cards are unresolved labels, not researched terms.</p>
-<form action="/example" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Import bundled synthetic example</button></form></section>
-{% endif %}
-<p>Next: open an event to inspect its evidence, correct a fact, or record a review.</p>
+<div class="page-head"><div><p class="eyebrow">{{ 'A HUMAN CHECKPOINT' if review_only else 'YOUR LOCAL LEDGER' }}</p><h1>{{ 'Review queue' if review_only else 'Transactions' }}</h1><p class="muted">{{ 'Resolve uncertainty, inspect evidence and record a decision. Originals always stay intact.' if review_only else 'Persisted notification events, with evidence and a complete correction history.' }}</p></div><a class="button secondary" href="{{ '/review' if review_only else '/ledger' }}{% if month %}?month={{ month.key }}{% endif %}">Refresh local data</a></div>
+{% if not review_only %}<form class="month-picker" method="get" action="/ledger"><div><label for="ledger-month">Filter by event month</label><input id="ledger-month" name="month" type="month" min="1970-01" max="9998-12" value="{{ selected_month.key }}" required></div><button class="secondary">View month</button><a class="inline-link" href="/ledger">All saved records</a>{% if month %}<a class="inline-link" href="/?month={{ month.key }}">{{ month.label }} charts & exclusions</a>{% endif %}</form>{% endif %}
+<section class="card table-card"><div class="section-heading"><div><h2>{{ transactions|length }} {{ 'queued ' if review_only else '' }}event{{ '' if transactions|length == 1 else 's' }}</h2><p>{{ review_count }} need review · {{ revision_count }} historical transaction revision{{ '' if revision_count == 1 else 's' }} across the ledger{% if month %} · {{ month.label }}, known event dates only{% endif %}</p></div>{% if not review_only %}<a href="/imports">Import data ↗</a>{% endif %}</div>
+{% if transactions %}{{ transactions_table(transactions, groups) }}{% else %}<div class="empty"><span class="empty-icon" aria-hidden="true">{{ '✓' if review_only else '≡' }}</span><h3>{{ 'Nothing waiting for review.' if review_only else 'Your ledger is ready when you are.' }}</h3><p>0 results. {{ 'No events currently require review. Accepted and rejected events remain in Transactions with their history.' if review_only else 'Import a validated schema document to add events. Loaded email stays in Mail inbox and does not become a transaction.' }}</p><a class="button secondary" href="{{ '/ledger' if review_only else '/imports' }}">{{ 'View transactions' if review_only else 'Import data or try an example' }}</a></div>{% endif %}</section>
+<p class="subtle-note">Next: open an event to inspect evidence, correct a fact or record a review. Local refresh rereads SQLite; it never fetches mail.</p>
 {% endblock %}
