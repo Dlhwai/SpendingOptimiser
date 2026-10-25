@@ -2,8 +2,10 @@
 
 The main page is a calendar-month view of **saved ledger facts**, not a Gmail
 parser, complete bank statement or AI-generated dashboard. All page GETs read
-local data only. There is no chatbot, provider connection, model call, automatic
-acceptance, background sync or customizable dashboard configuration.
+local data only and never invoke a model. There is no chatbot, automatic acceptance,
+background sync or customizable dashboard configuration. An optional
+[safe-reference AI workflow](subscription-ai.md) connects a supported ChatGPT
+subscription for official public terms and placeholder structures only.
 
 1. Start `uv run --locked spending-optimiser` and open http://127.0.0.1:8765.
 2. Open **Mail inbox**, complete the [one-time Gmail setup](gmail.md), then Connect
@@ -41,19 +43,22 @@ acceptance, background sync or customizable dashboard configuration.
 
 ## Current extraction and privacy boundary
 
-The separate constrained extraction module is fixture-tested but **not wired to
-Gmail or a live AI provider**. Saved mail does not yet produce proposals. Reviewed
-transactions come from the existing offline schema import/review workflow.
-The synthetic preview demonstrates that saved-data workflow, not AI extraction.
-Provider integration remains deferred until the privacy decision: whether any
-selected saved content may leave this device or processing must be fully local.
-No API-key form or fake working AI connection is provided.
+The separate constrained model-based extraction module remains fixture-tested and
+is not wired to Gmail. The [safe-reference AI workflow](subscription-ai.md) supports
+an optional ChatGPT connection for app-captured official terms and allowlisted
+placeholder structures, never private mail. Accepted format layouts match saved
+mail locally and deterministically into unsaved, review-pending proposals on the
+Mail page. Loading and page views make no model calls or ledger changes.
+Reviewed transactions and charts still come from the offline schema import/review
+workflow. The monthly preview seeds fictional ledger records, not AI-extracted mail.
+Claude and Gemini are unavailable, with no API-billing fallback. Account-backed AI
+and real-bank format compatibility remain unverified.
 
 ## Inclusion rules and financial meaning
 
 - Calendar month is `[first day, first day of next month)` by `occurred_on`.
   Posting date, Gmail receipt date, observation time and revision time are never
-  substituted. The default month is the local system calendar month.
+  substituted.
 - Read only the latest canonical revision. Corrections replace prior facts in the
   projection, not in history. All dated decisions appear in the monthly table.
 - Summaries require an accepted event with resolved kind, amount, event date and

@@ -93,6 +93,51 @@ def load(service, pages=1, month="2025-02", action="continue"):
     return service.saved_month(calendar_month(month))
 
 
+@pytest.mark.parametrize(
+    ("initial", "count", "pages", "exhausted"),
+    [("empty", 0, 0, False), ("partial", 2, 1, False), ("full", 5, 3, True)],
+)
+def test_monthly_preview_seed_and_continuation_use_the_singapore_month(
+    tmp_path, monkeypatch, initial, count, pages, exhausted
+):
+    monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "examples"))
+    from monthly_preview import monthly_app
+
+    app = monthly_app(tmp_path, initial)
+    service = app.state.gmail
+    month = calendar_month("2025-02")
+    candidates, state = service.saved_month(month)
+    assert len(candidates) == count
+    assert (state["pages"], state["exhausted"]) == (pages, exhausted)
+    assert state["started"] == (initial != "empty")
+    ledger = app.state.ledger.load()
+    client = TestClient(app, base_url="http://127.0.0.1:8877")
+    assert client.get("/?month=2025-02").status_code == 200
+    assert f"Saved candidates: {count}" in client.get("/gmail?month=2025-02").text
+    fields = {
+        "csrf": client.cookies["ledger_csrf"],
+        "month": month.key,
+        "pages": "1",
+        "action": "continue",
+        "connection_id": service.connection_id,
+    }
+    for page in range(pages, 3):
+        response = client.post("/gmail/month", data=fields)
+        assert response.status_code == 200 and response.url.params["month"] == month.key
+        candidates, state = service.saved_month(month)
+        assert len(candidates) == (2, 4, 5)[page]
+        assert state["pages"] == page + 1
+        assert state["exhausted"] == (page == 2)
+    candidates, state = service.saved_month(month)
+    assert set(candidates) == {f"preview-{i}" for i in range(5)}
+    assert state["exhausted"] and state["duplicates"] == 1 and state["pages"] == 3
+    assert all(month.contains(c.gmail_internal_at) for c in candidates.values())
+    assert client.post("/gmail/month", data=fields).status_code == 200
+    assert service.saved_month(month)[1] == state
+    assert app.state.ledger.load() == ledger
+    assert app.state.ai.client is None
+
+
 def test_half_open_month_boundaries_and_query_timezone():
     feb = calendar_month("2024-02")
     assert (feb.start, feb.end) == (date(2024, 2, 1), date(2024, 3, 1))
@@ -510,7 +555,9 @@ def test_actual_gets_are_offline_and_chart_tables_exactly_agree_with_monthly_row
     data = TableData(response.text)
     assert len(data.rows) == 15
     assert "Gmail retrieval for this month is incomplete" in response.text
-    assert "not integrated" in response.text and "1 undated" in response.text
+    assert "Accepted layouts produce local, unsaved Mail proposals only" in response.text
+    assert "no private mail is sent to a model" in response.text
+    assert "1 undated" in response.text
     for currency in ("SGD", "JPY", "KWD", "USD"):
         total = sum(
             int(r["data-minor"])

@@ -93,10 +93,10 @@ headers are retained. This adapter performs no DKIM/SPF/DMARC verification.
   **None of these timestamps is a financial event date or posting date.**
 - `headers` preserve selected original values with JSON-pointer locators.
   `subject` separately decodes RFC2047 encoded words. `sender` is the decoded
-  single untrusted From claim for display only; absent, duplicate or undecodable
-  From headers become `None` with an `ambiguous_sender`/`undecodable_sender`
-  warning and never reject the candidate. `parts` contain every
-  inline `text/plain` and `text/html` alternative, with MIME type, payload/body
+  single untrusted From claim for display only. An absent From header becomes
+  `None` without a warning; duplicate or undecodable From headers become `None`
+  with an `ambiguous_sender`/`undecodable_sender` warning and never reject the candidate.
+  `parts` contain every inline `text/plain` and `text/html` alternative, with MIME type, payload/body
   locator, normalized text and a digest of the decoded part bytes. A later
   private extractor can cite `EvidenceRef(target="observation",
   evidence_revision_id=candidate.observation.observation_id, locator=part.locator)`.
@@ -128,8 +128,9 @@ headers are retained. This adapter performs no DKIM/SPF/DMARC verification.
 No amount, merchant, category/MCC, card product, account mapping, event kind,
 event date, posting date or acceptance is inferred. The adapter creates no
 `Transaction`, `SourceEvidence`, or public card-rule evidence. Never send raw
-mail or candidate content to public research or external models. Model use
-requires a separate explicit privacy opt-in.
+mail or candidate content to public research or external models. For the
+application's model-input boundary, see
+[safe AI privacy and enforcement](subscription-ai.md#privacy-and-enforcement).
 
 Dataclass reprs suppress mail content, message/thread IDs, namespace and page
 tokens. Error codes are allowlisted. This is a logging guard, **not an export
@@ -246,8 +247,10 @@ uv run --locked spending-optimiser
    view the complete subject, unverified headers and escaped
    normalized text. HTML is never executed, images never loaded, URLs never
    followed and embedded instructions never acted upon. Display is capped at
-   10,000 characters per candidate with a size notice. Candidates are not parsed
-   or added to the ledger and do not change review decisions or financial facts.
+   10,000 characters per candidate with a size notice. Accepted format layouts
+   match saved candidates locally and deterministically into unsaved, review-pending
+   Mail proposals. No model is called, nothing is added to the ledger and review
+   decisions and financial facts remain unchanged.
 6. **Refresh month** restarts this month's query with bounded pages, retaining
    saved candidates and deduplicating by stable account/message identity. Changed
    content versions are preserved. Continue until exhausted again; previous
@@ -297,7 +300,9 @@ This remains a single-user, loopback-only local app. The OS user/other local
 software are trusted; memory, browser history, OS-store access and backups still
 need normal OS protection. Do not expose the app on a LAN, through a proxy/tunnel,
 or enable third-party HTTP/debug logging. No private mail is sent to an external
-model, and there is no live AI integration.
+model. The optional [safe-reference AI integration](subscription-ai.md) supports
+ChatGPT only for app-captured official terms and allowlisted placeholder structures;
+account-backed AI verification and real-bank format qualification remain unverified.
 
 ## Validation readiness versus live verification
 

@@ -1,4 +1,4 @@
-"""Loopback-only ledger and explicit read-only Gmail loading. No model integrations."""
+"""Loopback ledger, explicit Gmail loading and safe-snapshot-only remote analysis."""
 
 import argparse
 import hmac
@@ -24,12 +24,17 @@ from starlette.exceptions import HTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from .ai_inputs import digest
+from .ai_service import AIService
+from .codex_client import MESSAGES as AI_MESSAGES
+from .codex_client import AIProblem
 from .common import EvidenceRef
 from .document import walk
 from .gmail_auth import MESSAGES, GmailProblem, NativeStore, configure_google
 from .gmail_service import GmailService
 from .ledger import CORRECTION_FIELDS, Conflict, Ledger, heads, needs_review, uncertain
 from .monthly import SINGAPORE, calendar_month, format_money, grouping, monthly_report
+from .public_terms import ISSUERS
 
 MAX_BODY = 2 * 1024 * 1024
 DEFAULT_DB = Path.home() / ".local" / "share" / "spending-optimiser" / "ledger.sqlite3"
@@ -93,12 +98,17 @@ class LocalBoundary:
         await self.app(scope, receive, secured)
 
 
-def create_app(database: str | Path | None = None, *, gmail_service=None) -> FastAPI:
+def create_app(
+    database: str | Path | None = None, *, gmail_service=None, ai_service=None, codex_client=None
+) -> FastAPI:
     ledger = Ledger(database or os.environ.get("SPENDING_OPTIMISER_DB", DEFAULT_DB))
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.ledger = ledger
     gmail = gmail_service if gmail_service is not None else GmailService(ledger.path)
     app.state.gmail = gmail
+    ai = ai_service if ai_service is not None else AIService(ledger, binary=codex_client)
+    app.state.ai = ai
+    app.add_event_handler("shutdown", ai.close)
     gmail_lock = threading.Lock()
     csrf = secrets.token_urlsafe(32)
     templates = Jinja2Templates(directory=str(files("spending_optimiser").joinpath("templates")))
@@ -212,6 +222,7 @@ def create_app(database: str | Path | None = None, *, gmail_service=None) -> Fas
             month=month,
             candidates=candidates,
             scan=scan,
+            matches=ai.format_proposals(candidates) if view.connection else {},
         )
 
     @app.post("/gmail/connect", response_class=HTMLResponse)
@@ -281,6 +292,107 @@ def create_app(database: str | Path | None = None, *, gmail_service=None) -> Fas
             text_field(form, "action"),
         )
         return RedirectResponse("/gmail?" + urlencode({"month": month.key}), status_code=303)
+
+    def ai_operation(action, *args):
+        try:
+            result = action(*args)
+            ai.problem = None
+            return result
+        except AIProblem as exc:
+            ai.problem = exc.code
+            if exc.code in {"timeout", "connection_failed", "unsafe_configuration"}:
+                ai.close()
+            return None
+        except OSError:
+            ai.close()
+            ai.problem = "connection_failed"
+            return None
+
+    @app.get("/ai", response_class=HTMLResponse)
+    async def ai_page(request: Request, snapshot: str = ""):
+        preview = ai.preview(snapshot) if snapshot else None
+        return render(
+            request,
+            "ai.html",
+            ai=ai,
+            messages=AI_MESSAGES,
+            issuers=ISSUERS,
+            snapshots=ai.snapshots(),
+            selected=snapshot,
+            preview=preview,
+            fingerprint=digest(preview) if preview else None,
+            proposals=ai.proposals(),
+        )
+
+    @app.post("/ai/connect")
+    async def ai_connect(request: Request):
+        await form_data(request, set())
+        if request.url.hostname != "127.0.0.1" or request.url.scheme != "http":
+            raise HTTPException(400, "Use the app's http://127.0.0.1 loopback address to connect")
+        await run_in_threadpool(ai_operation, ai.connect)
+        return RedirectResponse("/ai", 303)
+
+    @app.post("/ai/confirm")
+    async def ai_confirm(request: Request):
+        await form_data(request, set())
+        await run_in_threadpool(ai_operation, ai.confirm)
+        return RedirectResponse("/ai", 303)
+
+    @app.post("/ai/disconnect")
+    async def ai_disconnect(request: Request):
+        await form_data(request, set())
+        await run_in_threadpool(ai_operation, ai.disconnect)
+        return RedirectResponse("/ai", 303)
+
+    @app.post("/ai/save")
+    async def ai_save(request: Request):
+        form = await form_data(request, {"content"})
+        identity = ai.save_format(text_field(form, "content"))
+        return RedirectResponse("/ai?" + urlencode({"snapshot": identity}), 303)
+
+    @app.post("/ai/import")
+    async def ai_import(request: Request):
+        form = await form_data(request, {"issuer", "query"})
+        await run_in_threadpool(
+            ai.import_terms, text_field(form, "issuer"), text_field(form, "query")
+        )
+        return RedirectResponse("/ai", 303)
+
+    @app.post("/ai/analyse")
+    async def ai_analyse(request: Request):
+        form = await form_data(request, {"snapshot_id", "fingerprint", "connection_id", "consent"})
+        identity = await run_in_threadpool(
+            ai_operation,
+            ai.analyse,
+            *(
+                text_field(form, name)
+                for name in ("snapshot_id", "fingerprint", "connection_id", "consent")
+            ),
+        )
+        return RedirectResponse(
+            "/ai/proposal?" + urlencode({"id": identity}) if identity else "/ai", 303
+        )
+
+    @app.get("/ai/proposal", response_class=HTMLResponse)
+    async def ai_proposal(request: Request, id: str):
+        record = ai.find_proposal(id)
+        if record is None:
+            raise HTTPException(404, "Proposal is missing or belongs to another connection")
+        return render(
+            request,
+            "ai_review.html",
+            ai=ai,
+            record=record,
+            rendered=json.dumps(record["result"], indent=2),
+        )
+
+    @app.post("/ai/review")
+    async def ai_review(request: Request):
+        form = await form_data(request, {"proposal_id", "action"})
+        await run_in_threadpool(
+            ai_operation, ai.review, text_field(form, "proposal_id"), text_field(form, "action")
+        )
+        return RedirectResponse("/ai", 303)
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
@@ -429,6 +541,11 @@ def main():
         "--database", type=Path, help=f"SQLite path (default: {DEFAULT_DB}; env supported)"
     )
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument(
+        "--codex-client",
+        type=Path,
+        help="Opt in to the proof-qualified official Codex binary; see docs/subscription-ai.md",
+    )
     args = parser.parse_args()
     if args.configure_google:
         try:
@@ -449,7 +566,7 @@ def main():
     if not 1 <= args.port <= 65535:
         parser.error("port must be between 1 and 65535")
     uvicorn.run(
-        create_app(args.database),
+        create_app(args.database, codex_client=args.codex_client),
         host="127.0.0.1",
         port=args.port,
         proxy_headers=False,

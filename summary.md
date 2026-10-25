@@ -97,7 +97,7 @@ Unambiguous, validated records can be accepted automatically. Ambiguous or incom
 - Separate minimum-spend eligibility from bonus eligibility, and estimated rewards from rewards actually received.
 - Account for calendar/statement periods, transaction/posting dates, refunds, caps, exclusions, and rounding.
 - Treat Gmail as evidence, not necessarily a complete bank ledger; support corrections and eventual statement/CSV reconciliation.
-- Keep public-document research separate from private transaction extraction. External-model access to transaction content requires explicit opt-in and data minimization.
+- Keep public-document research separate from private transaction extraction. The application's [safe AI privacy boundary](docs/subscription-ai.md#privacy-and-enforcement) governs eligible model inputs.
 - Use read-only Gmail OAuth, OS credential storage, loopback-only serving by default, redacted logs, backups, and configurable source retention.
 - Treat retrieved web/email content as untrusted data, never executable agent instructions.
 - Do not commit real emails, account details, OAuth tokens, local databases, or session state.
@@ -112,7 +112,7 @@ A runnable offline local service now imports validated schema documents atomical
 
 The read-only Gmail adapter is now wired to Google Desktop OAuth sign-in and explicit bounded, resumable Singapore-time calendar-month loading in the local browser app. Native-only OS credential storage, refresh, account identity/isolation and disconnect are implemented; candidates are saved as readable local SQLite mail data per Google account and never become ledger transactions. A deterministic [monthly dashboard](docs/monthly.md) summarizes accepted ledger events per card/channel. Production library exchange/refresh and retrieval are synthetic end-to-end tested. Live-account consent/loading still require the user's Cloud configuration and explicit Google consent and have not been verified. See [Gmail setup, usage, privacy and limits](docs/gmail.md).
 
-There is no live model client, financial calculation engine, qualified bank-email parser, mail-to-ledger extraction, scheduler, or researched card-rule catalog in this milestone. The event ledger is not complete bank reconciliation or a rule-publication gate. The three named cards remain unverified supplied labels.
+See the [subscription-backed safe-reference AI workflow](docs/subscription-ai.md) for supported providers, safe inputs, proposal review and verification limits. Rewards, qualified mail-to-ledger ingestion, scheduling and a researched card-rule catalog remain separate milestones. The event ledger is not complete bank reconciliation or a rule-publication gate.
 
 Suggested build order:
 

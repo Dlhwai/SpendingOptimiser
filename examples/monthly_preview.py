@@ -16,7 +16,7 @@ class MonthlyTransport(PreviewTransport):
         parsed = urlparse(url)
         query = parse_qs(parsed.query)
         if parsed.path.endswith("/messages"):
-            if "after:1738367999 before:1740787200" != query.get("q", [""])[0]:
+            if "after:1738339199 before:1740758400" != query.get("q", [""])[0]:
                 return {}
             token = query.get("pageToken", [None])[0]
             return {

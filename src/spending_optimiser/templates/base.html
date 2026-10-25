@@ -13,8 +13,8 @@
 <a class="brand" href="/" aria-label="SpendingOptimiser home"><span class="brand-mark" aria-hidden="true">s<span>o</span></span><span>Spending<span class="brand-light">Optimiser</span></span></a>
 <p class="nav-label">YOUR WORKSPACE</p>
 <nav aria-label="Main navigation">
-{% for path, label, icon in [('/', 'Overview', '01'), ('/gmail', 'Mail inbox', '02'), ('/ledger', 'Transactions', '03'), ('/review', 'Review queue', '04')] %}
-<a href="{{ path }}{% if path in ['/', '/gmail', '/ledger'] and month is defined and month and request.query_params.get('month') %}?month={{ month.key }}{% endif %}" {% if request.url.path == path or (path == '/gmail' and request.url.path.startswith('/gmail/')) or (path == '/ledger' and request.url.path == '/transaction') %}aria-current="page"{% endif %}><span class="nav-icon" aria-hidden="true">{{ icon }}</span>{{ label }}</a>
+{% for path, label, icon in [('/', 'Overview', '01'), ('/gmail', 'Mail inbox', '02'), ('/ledger', 'Transactions', '03'), ('/review', 'Review queue', '04'), ('/ai', 'Safe AI analysis', '05')] %}
+<a href="{{ path }}{% if path in ['/', '/gmail', '/ledger'] and month is defined and month and request.query_params.get('month') %}?month={{ month.key }}{% endif %}" {% if request.url.path == path or (path == '/gmail' and request.url.path.startswith('/gmail/')) or (path == '/ledger' and request.url.path == '/transaction') or (path == '/ai' and request.url.path.startswith('/ai/')) %}aria-current="page"{% endif %}><span class="nav-icon" aria-hidden="true">{{ icon }}</span>{{ label }}</a>
 {% endfor %}
 </nav>
 <p class="nav-label secondary-label">MANAGE DATA</p>
@@ -26,9 +26,9 @@
 </aside>
 <div class="workspace">
 <header class="topbar"><span>Personal finance workspace</span><span class="local-badge"><span class="status-dot" aria-hidden="true"></span> Local only</span></header>
-{% if request.app.state.synthetic_preview|default(false) %}<div class="preview-banner">SYNTHETIC PREVIEW - Fictional account, mail and imported example. No Google or native credential access.</div>{% endif %}
+{% if request.app.state.synthetic_preview|default(false) %}<div class="preview-banner">SYNTHETIC PREVIEW - Fictional account, mail and imported example. No Google/model requests or native credential access.</div>{% endif %}
 <main id="main" tabindex="-1">{% block content %}{% endblock %}</main>
-<footer class="workspace-footer"><span>SpendingOptimiser · Your local workspace</span><span>No external AI. No background mail sync.</span></footer>
+<footer class="workspace-footer"><span>SpendingOptimiser · Your local workspace</span><span>AI only on explicit analysis. No background mail sync.</span></footer>
 </div>
 </div>
 </body></html>

@@ -13,10 +13,116 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse
 from google.oauth2.credentials import Credentials
 
+from spending_optimiser.ai_inputs import MARKER, stated_amounts
+from spending_optimiser.ai_service import AIService
 from spending_optimiser.gmail import GmailRestClient
 from spending_optimiser.gmail_auth import GmailProblem, GoogleConnection, configure_google
 from spending_optimiser.gmail_service import GmailService
+from spending_optimiser.ledger import Ledger
 from spending_optimiser.web import create_app
+
+PUBLIC_QUOTE = (
+    "Earn bonus yuu Points with your DBS yuu Card when you spend S$800 monthly, "
+    "and spend at 4 different participating merchants such as SimplyGo, Cold Storage, "
+    "foodpanda and Guardian."
+)
+PREVIEW_PAGES = {
+    "https://www.dbs.com.sg/personal/cards/credit-cards/dbs-yuu-cards": (
+        "<html><body><h1>SYNTHETIC PREVIEW COPY</h1><p>DBS yuu Card</p>"
+        '<a href="/personal/cards/credit-cards/dbs-yuu-terms">yuu card terms and conditions</a>'
+        "</body></html>"
+    ),
+    "https://www.dbs.com.sg/personal/cards/credit-cards/dbs-yuu-terms": (
+        "<html><body><h1>Synthetic preview of yuu terms and conditions</h1>"
+        f"<p>{PUBLIC_QUOTE}</p><script>ignored()</script></body></html>"
+    ),
+}
+
+
+class PreviewPublicTransport:
+    """Fake official-site transport. Serves synthetic pages; never opens a socket."""
+
+    def __init__(self, pages=None):
+        self.pages = dict(PREVIEW_PAGES if pages is None else pages)
+        self.requests = []
+
+    def __call__(self, url, budget):
+        self.requests.append(url)
+        page = self.pages.get(url)
+        if page is None:
+            return 404, {"content-type": "text/html"}, b""
+        if isinstance(page, tuple):
+            return page
+        return 200, {"content-type": "text/html; charset=utf-8"}, page.encode()
+
+
+PREVIEW_ROLES = (
+    ("currency", "currency"),
+    ("amount", "amount"),
+    ("merchant", "merchant"),
+    ("dmy", "date_dmy"),
+    ("date", "date_iso"),
+    ("card", "card_suffix"),
+)
+
+
+class PreviewAIClient:
+    """Fake cached subscription and model transport. No native client or model calls."""
+
+    def __init__(self, binary, home):
+        self.account_value = {"email": "ai.preview@example.invalid", "plan": "plus"}
+        self.inputs = []
+        self.output = None
+        self.started = self.closed = False
+
+    def start(self):
+        self.started = True
+
+    def account(self):
+        return self.account_value
+
+    def login(self):
+        return "/preview-ai-consent"
+
+    def analyse(self, text, schema):
+        self.inputs.append(text)
+        if self.output is not None:
+            return self.output
+        snapshot = json.loads(text)["saved_snapshot"]
+        content = snapshot["content"]
+        if snapshot["kind"] == "terms":
+            amounts = stated_amounts(content)[:1]
+            if not amounts:
+                return json.dumps(
+                    {"kind": "terms", "currency": None, "minor_units": None, "quote": None}
+                )
+            start, end, amount = amounts[0]
+            line_start = content.rfind("\n", 0, start) + 1
+            line_end = content.find("\n", end)
+            return json.dumps(
+                {
+                    "kind": "terms",
+                    "currency": amount.currency,
+                    "minor_units": amount.minor_units,
+                    "quote": content[line_start : None if line_end < 0 else line_end],
+                }
+            )
+        markers = [
+            {
+                "marker": marker,
+                "role": next((r for word, r in PREVIEW_ROLES if word in marker.lower()), None),
+            }
+            for marker in MARKER.findall(content)
+        ]
+        if any(item["role"] is None for item in markers):
+            markers = None
+        return json.dumps({"kind": "format", "markers": markers})
+
+    def logout(self):
+        self.account_value = None
+
+    def close(self):
+        self.closed = True
 
 
 class MemoryStore:
@@ -124,7 +230,13 @@ def preview_app(directory, *, configured=True, populated=False):
         oauth=PreviewOAuth(),
         client_factory=lambda tokens: GmailRestClient(tokens, PreviewTransport()),
     )
-    app = create_app(path, gmail_service=service)
+    ai = AIService(
+        Ledger(path),
+        binary="synthetic-client-only",
+        client_factory=PreviewAIClient,
+        transport=PreviewPublicTransport(),
+    )
+    app = create_app(path, gmail_service=service, ai_service=ai)
     app.state.synthetic_preview = True
     if populated:
         from importlib.resources import files
