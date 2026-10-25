@@ -219,7 +219,7 @@ def create_app(
                 return None
 
     @app.get("/gmail", response_class=HTMLResponse)
-    async def gmail_page(request: Request):
+    def gmail_page(request: Request):
         request.session.setdefault("id", secrets.token_urlsafe(32))
         month = calendar_month(request.query_params.get("month"))
         view = copy(gmail)  # one account identity per rendered response, even during switches
@@ -237,7 +237,7 @@ def create_app(
         )
 
     @app.get("/storage", response_class=HTMLResponse)
-    async def storage_page(request: Request):
+    def storage_page(request: Request):
         month = calendar_month(request.query_params.get("month"))
         return render(
             request,
@@ -360,7 +360,7 @@ def create_app(
             return None
 
     @app.get("/ai", response_class=HTMLResponse)
-    async def ai_page(request: Request, snapshot: str = ""):
+    def ai_page(request: Request, snapshot: str = ""):
         preview = ai.preview(snapshot) if snapshot else None
         return render(
             request,
@@ -398,7 +398,7 @@ def create_app(
     @app.post("/ai/save")
     async def ai_save(request: Request):
         form = await form_data(request, {"content"})
-        identity = ai.save_format(text_field(form, "content"))
+        identity = await run_in_threadpool(ai.save_format, text_field(form, "content"))
         return RedirectResponse("/ai?" + urlencode({"snapshot": identity}), 303)
 
     @app.post("/ai/import")
@@ -425,7 +425,7 @@ def create_app(
         )
 
     @app.get("/ai/proposal", response_class=HTMLResponse)
-    async def ai_proposal(request: Request, id: str):
+    def ai_proposal(request: Request, id: str):
         record = ai.find_proposal(id)
         if record is None:
             raise HTTPException(404, "Proposal is missing or belongs to another connection")
@@ -446,7 +446,7 @@ def create_app(
         return RedirectResponse("/ai", 303)
 
     @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request):
+    def index(request: Request):
         document = ledger.load()
         month = calendar_month(request.query_params.get("month"))
         view = copy(gmail)
@@ -464,7 +464,7 @@ def create_app(
         )
 
     @app.get("/ledger", response_class=HTMLResponse)
-    async def ledger_page(request: Request):
+    def ledger_page(request: Request):
         document = ledger.load()
         transactions = heads(document)
         month = (
@@ -491,7 +491,7 @@ def create_app(
         return render(request, "imports.html")
 
     @app.get("/review", response_class=HTMLResponse)
-    async def queue(request: Request):
+    def queue(request: Request):
         document = ledger.load()
         transactions = [t for t in heads(document) if needs_review(t)]
         return render(
@@ -505,7 +505,7 @@ def create_app(
         )
 
     @app.get("/transaction", response_class=HTMLResponse)
-    async def detail(request: Request, event_id: str):
+    def detail(request: Request, event_id: str):
         document = ledger.load()
         history = [t for t in document.transactions if t.event_id == event_id]
         transaction = next((t for t in heads(document) if t.event_id == event_id), None)
@@ -566,7 +566,7 @@ def create_app(
         )
 
     @app.get("/public", response_class=HTMLResponse)
-    async def public(request: Request):
+    def public(request: Request):
         document = ledger.load()
         return render(
             request,
