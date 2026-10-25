@@ -12,25 +12,39 @@ part of this change.
   This milestone qualifies unmanaged clients only: any effective MDM, local-admin
   or cloud requirements cause refusal, not an attempt to override policy.
   The native binary checksum is pinned to the version used for enforcement proof.
-- Saving and inspecting one vetted public DBS yuu bonus-spend paragraph, captured
-  on 24 October 2026 from the [official public page](https://www.dbs.com.sg/personal/cards/credit-cards/dbs-yuu-cards).
-  Its S$800 threshold can become a proposed `RuleRevision`/`MinimumSpend` value.
-  The four-merchant qualifier remains attached verbatim as evidence. The precise
-  card variant, period basis/timezone, earning rates, eligibility, applicability,
-  caps and effective dates remain unknown. This is **not complete card terms**.
-- Two versioned synthetic bank-message placeholder structures. AI proposes a
-  bounded layout identifier, never Python, shell or generated regex. A local,
-  deterministic interpreter validates the matching synthetic example.
+- Saving snapshots of public terms or bank-message placeholder structures from
+  **public source-evidence records already in this ledger** (the `evidence`
+  collection shown under Public data). The saved text must exactly match the
+  record's `content_sha256`; superseded, rejected or digest-less records are refused.
+  New or changed terms and formats therefore need a new public evidence revision,
+  not a code change.
+- Public terms: the model returns one stated minimum-spend threshold (ISO currency,
+  integer minor units) and an exact quote. The app accepts it only if the quote is
+  contiguous text of the saved content and its deterministic amount reader finds that
+  exact amount in the quote. The result is a proposed `RuleRevision`/`MinimumSpend`
+  citing the evidence revision. Period basis, timezone, earning rates, eligibility,
+  applicability, caps and effective dates remain unknown. Uncertain answers stay null.
+- Format structures: one line where every value is a distinct `<ROLE>` placeholder;
+  digits, `@` and raw text are refused. The model maps each placeholder to a fixed
+  role (currency, amount, merchant, date_iso, date_dmy, card_suffix), never Python,
+  shell or regex. The app requires every placeholder mapped exactly once, then
+  round-trips fictional values through its fixed role patterns.
 - Explicit review with immutable accept/reject decisions and accepted-version
-  ancestry. Acceptance saves a **reference only**; it does not install a parser,
-  change accepted ledger facts, qualify a real-bank adapter or calculate rewards.
+  ancestry. Accepted terms are a versioned reference. The current accepted format
+  layouts are applied locally to loaded Gmail candidates: a single unambiguous
+  matching line becomes an unsaved, review-pending `Transaction` proposal on the
+  Mail page. No model is called, nothing is written to the ledger and no rewards
+  are calculated.
 
-Unlisted public documents and message structures are currently unavailable.
-There is no arbitrary text/upload field, web search, general parser language,
-terms monitoring, reward optimizer or private-history analysis. The closed catalog
-is deliberate: a confirmation checkbox or regex scrubber cannot prove arbitrary
-text contains no sensitive information. Adding a catalog entry requires a code
-change with public/synthetic provenance and deterministic validation.
+Saved snapshots whose evidence was later superseded are listed as stale, and rows
+the current validator cannot read are listed as unsupported; neither can be previewed
+or analysed. There is no web search, general parser language, terms monitoring,
+reward optimizer or private-history analysis.
+
+**Remaining gap:** the app cannot prove a third-party document is public without
+fetching it. Publicness is attested by the user's public evidence record and its
+digest, not by a confirmation checkbox or regex scrubber. Placeholder structures are
+also structurally checked, but a literal word in a structure is the user's attestation.
 
 ## Local setup
 
@@ -60,11 +74,12 @@ weaker controls. Do not upgrade the client without requalifying enforcement.
    Return to the app and select **Check saved session after consent**. Keychain
    must be available/unlocked; there is no plaintext fallback. An eligible cached
    subscription session may instead restore directly on the explicit Connect POST.
-4. Save a safe catalog snapshot, inspect its complete application-supplied input,
+4. Import a public evidence record with `content_sha256`, save the matching text as a
+   terms or format snapshot, inspect its complete application-supplied input,
    check the consent box and select **Request analysis now**. Nothing is sent by
    Save, preview, a page GET, Gmail loading or an ordinary ledger lookup.
-5. Review the structured result, evidence and unknowns. Accept a saved reference
-   or reject it. No automatic mail extraction or rule installation follows.
+5. Review the structured result, evidence and unknowns. Accept or reject it.
+   Accepted format layouts only create unsaved, review-pending Mail proposals.
 
 The saved-session label is not a live entitlement guarantee. This project has not
 performed account-backed live verification. The selected model must be available
@@ -168,8 +183,9 @@ uv run --locked python examples/ui_preview.py --port 8893
 
 This is the actual desktop UI with a disposable database, fake cached subscription,
 fake model, fake Gmail and memory-only credentials. **No provider/native credential
-access occurs.** Port 8765 is refused. Choose Safe AI analysis, Connect, save each
-reference, inspect the input, request analysis and review/accept/reject. The banner
+access occurs.** Port 8765 is refused. Synthetic public evidence records are imported.
+Choose Safe AI analysis, Connect, save each record's text, inspect the input, request
+analysis and review/accept/reject. The banner
 labels all screens synthetic. Ctrl-C removes the disposable database.
 
 ```sh
@@ -178,5 +194,5 @@ uv run --locked ruff check .
 uv run --locked ruff format --check .
 ```
 
-Next: qualify further public terms and sanitized bank-format fixtures without
+Next: qualify real public terms and sanitized bank-format evidence without
 broadening the private-data or model-authority boundary.

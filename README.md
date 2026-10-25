@@ -2,7 +2,7 @@
 
 A planned personal spending tracker for maximizing credit-card rewards while keeping monthly cash flow and budgets visible.
 
-**Status: deterministic desktop monthly views, account-scoped saved Gmail candidates, and the local import/review ledger are implemented. Monthly loading is explicit, bounded and resumable. All page views read saved data only. OAuth/retrieval are synthetic-tested; live Gmail still needs your setup and consent. An optional, restricted subscription-backed Codex workflow now analyses only saved catalog-vetted public/synthetic references. Live AI accounts and qualified bank-email extraction have not been verified.**
+**Status: deterministic desktop monthly views, account-scoped saved Gmail candidates, and the local import/review ledger are implemented. Monthly loading is explicit, bounded and resumable. All page views read saved data only. OAuth/retrieval are synthetic-tested; live Gmail still needs your setup and consent. An optional, restricted subscription-backed Codex workflow now analyses only saved snapshots bound by digest to public source-evidence records. Live AI accounts and qualified bank-email extraction have not been verified.**
 
 Start with the [monthly workflow, inclusion rules and safe preview](docs/monthly.md).
 
@@ -22,7 +22,7 @@ Start with the [monthly workflow, inclusion rules and safe preview](docs/monthly
 
 ## Implemented milestone
 
-An importable `spending_optimiser` package provides typed Pydantic models for transaction revisions, account/card identities, uncertain card rules, source evidence, and self-contained JSON snapshots. It includes synthetic fixtures, round-trip and validation tests, a pinned uv setup, and CI. A local FastAPI browser service now imports these validated snapshots transactionally into SQLite, displays a persisted event ledger, and preserves auditable review/correction revisions. It does not calculate rewards, extract financial facts from emails, or reconcile bank statements. A separate [constrained extraction use case](docs/extraction.md) accepts notification data and an injected model callable, validates bounded evidence spans, and returns pending-review proposals using synthetic fixtures. That extractor has no provider client or qualified real-bank parser; the separate safe-reference AI workflow never receives mail. A separate read-only Gmail adapter lists and retrieves private notification candidates, with pagination, MIME normalization, stable observation identities, and redacted errors. It creates no accepted transactions. The three exact card variants remain unresolved. The AI catalog includes one vetted public DBS yuu bonus-spend fragment, not complete or qualified card terms.
+An importable `spending_optimiser` package provides typed Pydantic models for transaction revisions, account/card identities, uncertain card rules, source evidence, and self-contained JSON snapshots. It includes synthetic fixtures, round-trip and validation tests, a pinned uv setup, and CI. A local FastAPI browser service now imports these validated snapshots transactionally into SQLite, displays a persisted event ledger, and preserves auditable review/correction revisions. It does not calculate rewards, extract financial facts from emails, or reconcile bank statements. A separate [constrained extraction use case](docs/extraction.md) accepts notification data and an injected model callable, validates bounded evidence spans, and returns pending-review proposals using synthetic fixtures. That extractor has no provider client or qualified real-bank parser; the separate safe-reference AI workflow never receives mail. A separate read-only Gmail adapter lists and retrieves private notification candidates, with pagination, MIME normalization, stable observation identities, and redacted errors. It creates no accepted transactions. The three exact card variants remain unresolved. Public-term analysis yields typed, uncertain minimum-spend proposals, not complete or qualified card terms.
 
 See [schema usage and limits](docs/schemas.md). Quick start (Python 3.11.9, uv 0.11.8):
 
@@ -87,8 +87,9 @@ the disposable database. [Exact fixture counts and limits](docs/monthly.md).
 Choose **Safe AI analysis** to connect an eligible ChatGPT session through a pinned,
 restricted official Codex client, save a vetted public terms fragment or synthetic
 placeholder structure, inspect the exact safe input, explicitly request analysis,
-and review a versioned proposal. Acceptance saves a reference only, not ledger
-facts or an automatically installed parser. Default app use remains disconnected.
+and review a versioned proposal. Accepted format layouts parse loaded mail locally
+into unsaved, review-pending proposals; nothing changes ledger facts automatically.
+Default app use remains disconnected.
 Claude and Gemini are honestly unavailable; no API-key billing fallback is used.
 See [supported client setup, provider evidence, privacy boundary and limits](docs/subscription-ai.md).
 
@@ -119,7 +120,7 @@ projections use saved canonical ledger facts independently of ingestion and AI.
 
 ## Privacy
 
-Commit only source code, documentation, and sanitized fixtures. Keep actual financial emails, account details, OAuth credentials, databases, and local review/session state out of Git. Private transaction content is never eligible for external models. Only saved, catalog-vetted public terms or synthetic placeholder structures may be sent, with explicit per-analysis action; confirmation alone cannot authorize excluded private data.
+Commit only source code, documentation, and sanitized fixtures. Keep actual financial emails, account details, OAuth credentials, databases, and local review/session state out of Git. Private transaction content is never eligible for external models. Only saved public terms or placeholder structures attested by public source-evidence digests may be sent, with explicit per-analysis action; confirmation alone cannot authorize excluded private data.
 
 ## Next step
 

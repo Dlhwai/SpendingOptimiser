@@ -2,6 +2,7 @@
 
 import argparse
 import base64
+import hashlib
 import json
 import secrets
 import tempfile
@@ -13,13 +14,73 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse
 from google.oauth2.credentials import Credentials
 
-from spending_optimiser.ai_inputs import PUBLIC_QUOTE
+from spending_optimiser.ai_inputs import MARKER, stated_amounts
 from spending_optimiser.ai_service import AIService
 from spending_optimiser.gmail import GmailRestClient
 from spending_optimiser.gmail_auth import GmailProblem, GoogleConnection, configure_google
 from spending_optimiser.gmail_service import GmailService
 from spending_optimiser.ledger import Ledger
 from spending_optimiser.web import create_app
+
+PUBLIC_QUOTE = (
+    "Earn bonus yuu Points with your DBS yuu Card when you spend S$800 monthly, "
+    "and spend at 4 different participating merchants such as SimplyGo, Cold Storage, "
+    "foodpanda and Guardian."
+)
+PUBLIC_SOURCES = {
+    "dbs-yuu-fragment-2026-10-24": {
+        "source_id": "dbs-yuu-public-page",
+        "url": "https://www.dbs.com.sg/personal/cards/credit-cards/dbs-yuu-cards",
+        "source_kind": "issuer",
+        "retrieved_at": "2026-10-24T16:15:00+08:00",
+        "document_version": "Public page fragment only; not full card terms",
+        "kind": "terms",
+        "content": PUBLIC_QUOTE,
+    },
+    "synthetic-purchase-first-v1": {
+        "source_id": "synthetic-purchase-first",
+        "url": "https://example.invalid/synthetic-purchase-first",
+        "source_kind": "synthetic",
+        "retrieved_at": "2025-01-02T11:00:00+08:00",
+        "document_version": "synthetic-1",
+        "kind": "format",
+        "content": "Purchase <CURRENCY> <AMOUNT> at <MERCHANT> on <DATE_ISO>. Card <CARD_SUFFIX>.",
+    },
+    "synthetic-card-first-v1": {
+        "source_id": "synthetic-card-first",
+        "url": "https://example.invalid/synthetic-card-first",
+        "source_kind": "synthetic",
+        "retrieved_at": "2025-01-02T11:00:00+08:00",
+        "document_version": "synthetic-1",
+        "kind": "format",
+        "content": "Card <CARD_SUFFIX>: <CURRENCY> <AMOUNT> at <MERCHANT>; date <DATE_DMY>.",
+    },
+}
+PREVIEW_ROLES = (
+    ("currency", "currency"),
+    ("amount", "amount"),
+    ("merchant", "merchant"),
+    ("dmy", "date_dmy"),
+    ("date", "date_iso"),
+    ("card", "card_suffix"),
+)
+
+
+def public_document(sources):
+    """Public source-evidence records whose digests attest the exact saved content."""
+    evidence = [
+        {
+            "revision_id": revision,
+            **{k: v for k, v in item.items() if k not in {"kind", "content"}},
+            "content_sha256": hashlib.sha256(item["content"].encode()).hexdigest(),
+        }
+        for revision, item in sources.items()
+    ]
+    return json.dumps({"evidence": evidence})
+
+
+def import_public_sources(ledger, sources=PUBLIC_SOURCES):
+    return ledger.import_document(public_document(sources))
 
 
 class PreviewAIClient:
@@ -45,11 +106,27 @@ class PreviewAIClient:
         if self.output is not None:
             return self.output
         snapshot = json.loads(text)["saved_snapshot"]
-        return json.dumps(
-            {"kind": "terms", "minor_units": 80000, "quote": PUBLIC_QUOTE}
-            if snapshot["kind"] == "terms"
-            else {"kind": "format", "layout": snapshot["key"], "quote": snapshot["content"]}
-        )
+        content = snapshot["content"]
+        if snapshot["kind"] == "terms":
+            amounts = stated_amounts(content)[:1]
+            return json.dumps(
+                {
+                    "kind": "terms",
+                    "currency": amounts[0].currency if amounts else None,
+                    "minor_units": amounts[0].minor_units if amounts else None,
+                    "quote": content if amounts else None,
+                }
+            )
+        markers = [
+            {
+                "marker": marker,
+                "role": next((r for word, r in PREVIEW_ROLES if word in marker.lower()), None),
+            }
+            for marker in MARKER.findall(content)
+        ]
+        if any(item["role"] is None for item in markers):
+            markers = None
+        return json.dumps({"kind": "format", "markers": markers})
 
     def logout(self):
         self.account_value = None
@@ -203,6 +280,7 @@ def main():
         parser.error("Use a separate loopback port from 1024-65535, never 8765")
     with tempfile.TemporaryDirectory(prefix="spending-ui-preview-") as directory:
         app = preview_app(directory, configured=not args.unconfigured, populated=args.populated)
+        import_public_sources(app.state.ledger)
         print(f"Synthetic preview: http://127.0.0.1:{args.port}; disposable database: {directory}")
         uvicorn.run(app, host="127.0.0.1", port=args.port, access_log=False, proxy_headers=False)
 

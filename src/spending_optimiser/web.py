@@ -24,7 +24,7 @@ from starlette.exceptions import HTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .ai_inputs import CATALOG, digest
+from .ai_inputs import digest
 from .ai_service import AIService
 from .codex_client import MESSAGES as AI_MESSAGES
 from .codex_client import AIProblem
@@ -221,6 +221,7 @@ def create_app(
             month=month,
             candidates=candidates,
             scan=scan,
+            matches=ai.format_proposals(candidates) if view.connection else {},
         )
 
     @app.post("/gmail/connect", response_class=HTMLResponse)
@@ -314,7 +315,7 @@ def create_app(
             "ai.html",
             ai=ai,
             messages=AI_MESSAGES,
-            catalog=CATALOG,
+            sources=ai.sources(),
             snapshots=ai.snapshots(),
             selected=snapshot,
             preview=preview,
@@ -344,8 +345,12 @@ def create_app(
 
     @app.post("/ai/save")
     async def ai_save(request: Request):
-        form = await form_data(request, {"key"})
-        identity = ai.save(text_field(form, "key"))
+        form = await form_data(request, {"evidence", "kind", "content"})
+        identity = ai.save(
+            text_field(form, "evidence"),
+            text_field(form, "kind"),
+            text_field(form, "content").replace("\r\n", "\n"),
+        )
         return RedirectResponse("/ai?" + urlencode({"snapshot": identity}), 303)
 
     @app.post("/ai/analyse")
@@ -365,7 +370,7 @@ def create_app(
 
     @app.get("/ai/proposal", response_class=HTMLResponse)
     async def ai_proposal(request: Request, id: str):
-        record = next((p for p in ai.proposals() if p["id"] == id), None)
+        record = ai.find_proposal(id)
         if record is None:
             raise HTTPException(404, "Proposal is missing or belongs to another connection")
         return render(
