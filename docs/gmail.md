@@ -281,10 +281,13 @@ client entry is shared by this OS app; saved authorization is keyed by the
 absolute ledger-path digest. **Monthly mail and checkpoints persist as readable
 SQLite data with no app-level encryption**, scoped by stable Google identity,
 including headers, message text, every retained content version, failed-message
-IDs and successful-ID/page-token continuation. Additive mail tables do not
-rewrite existing ledger records or change ledger format 1. Protect disk/backups.
-Saved mail is retained indefinitely; there is no retention, purge or deletion
-action. Disconnect does not remove the local cache or ledger history, only
+IDs and successful-ID/page-token continuation. Existing ledger records stay intact.
+Local database format 2 supports verified compressed payloads, not encryption;
+JSON schema stays 1.0. Protect disk/backups. [Storage & archives](storage.md)
+keeps the current Singapore month plus preceding two mail months uncompressed,
+losslessly compresses eligible older detail above 1 decimal GB, and can restore
+a selected account/month locally. Saved mail is retained indefinitely; there is
+no purge or deletion action. Disconnect does not remove the local cache or ledger history, only
 visible access and authorization.
 
 Restart hides mail and clears browser sessions, without accessing the credential

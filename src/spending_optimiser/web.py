@@ -35,6 +35,7 @@ from .gmail_service import GmailService
 from .ledger import CORRECTION_FIELDS, Conflict, Ledger, heads, needs_review, uncertain
 from .monthly import SINGAPORE, calendar_month, format_money, grouping, monthly_report
 from .public_terms import ISSUERS
+from .storage import Storage
 
 MAX_BODY = 2 * 1024 * 1024
 DEFAULT_DB = Path.home() / ".local" / "share" / "spending-optimiser" / "ledger.sqlite3"
@@ -109,6 +110,9 @@ def create_app(
     ai = ai_service if ai_service is not None else AIService(ledger, binary=codex_client)
     app.state.ai = ai
     app.add_event_handler("shutdown", ai.close)
+    storage = Storage(ledger)
+    app.state.storage = storage
+    app.state.storage_result = None
     gmail_lock = threading.Lock()
     csrf = secrets.token_urlsafe(32)
     templates = Jinja2Templates(directory=str(files("spending_optimiser").joinpath("templates")))
@@ -223,7 +227,46 @@ def create_app(
             candidates=candidates,
             scan=scan,
             matches=ai.format_proposals(candidates) if view.connection else {},
+            archived=storage.mail_archived(view.namespace, month),
         )
+
+    @app.get("/storage", response_class=HTMLResponse)
+    async def storage_page(request: Request):
+        month = calendar_month(request.query_params.get("month"))
+        return render(
+            request,
+            "storage.html",
+            storage=storage.status(),
+            result=app.state.storage_result,
+            gmail=copy(gmail),
+            month=month,
+        )
+
+    @app.post("/storage/compress")
+    async def storage_compress(request: Request):
+        await form_data(request, set())
+        app.state.storage_result = await run_in_threadpool(storage.compress_if_needed)
+        return RedirectResponse("/storage", status_code=303)
+
+    @app.post("/storage/restore")
+    async def storage_restore(request: Request):
+        form = await form_data(request, {"month", "connection_id"})
+        month = calendar_month(text_field(form, "month"))
+        connection_id = text_field(form, "connection_id")
+
+        def restore():
+            if gmail.connection is None or not secrets.compare_digest(
+                connection_id.encode(), gmail.connection_id.encode()
+            ):
+                raise HTTPException(409, "Account changed; reload before restoring saved mail")
+            restored = storage.restore_mail(gmail.namespace, month)
+            gmail.notice_month = month.key
+            gmail.notice = (
+                f"Restored {restored} saved mail versions for {month.label}. No mail fetched."
+            )
+
+        await run_in_threadpool(gmail_operation, restore)
+        return RedirectResponse("/gmail?" + urlencode({"month": month.key}), status_code=303)
 
     @app.post("/gmail/connect", response_class=HTMLResponse)
     async def gmail_connect(request: Request):

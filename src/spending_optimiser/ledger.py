@@ -80,8 +80,9 @@ class Ledger:
         # Restrict new DBs before SQLite writes financial content, without changing umask.
         self.path.touch(mode=0o600, exist_ok=True)
         with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in {0, 1}:
+            if version not in {0, 1, 2}:
                 raise ValueError("Unsupported local database version")
             for table in ("public_records", "private_records"):
                 db.execute(
@@ -93,7 +94,17 @@ class Ledger:
                 "CREATE TABLE IF NOT EXISTS imports (digest TEXT PRIMARY KEY, "
                 "imported_at TEXT NOT NULL, document TEXT NOT NULL)"
             )
-            db.execute("PRAGMA user_version = 1")
+            if db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='mail_versions'"
+            ).fetchone() and "receipt_month" not in {
+                row[1] for row in db.execute("PRAGMA table_info(mail_versions)")
+            }:
+                # Existing text remains untouched. Cold rows get month metadata
+                # when compressed, so unrelated cold corruption cannot block hot reads.
+                db.execute("ALTER TABLE mail_versions ADD COLUMN receipt_month TEXT")
+            # Version 2 permits verified compressed BLOBs in import/mail payloads.
+            # Older binaries fail closed instead of mistaking BLOBs for JSON.
+            db.execute("PRAGMA user_version = 2")
 
     @contextmanager
     def connection(self):
@@ -117,6 +128,21 @@ class Ledger:
         with self.connection() as db:
             db.execute("BEGIN")  # one consistent snapshot across both record tables
             return self._load(db)
+
+    def maintain_storage(self):
+        from .storage import Storage
+
+        return Storage(self).compress_if_needed()
+
+    def import_snapshot(self, digest: str) -> str:
+        """Read the exact canonical import receipt, whether hot or compressed."""
+        from .storage import unpack
+
+        with self.connection() as db:
+            row = db.execute("SELECT document FROM imports WHERE digest=?", (digest,)).fetchone()
+        if row is None:
+            raise ValueError("Unknown import receipt")
+        return unpack(row[0])
 
     def import_document(self, text: str) -> dict[str, int]:
         try:
@@ -170,7 +196,8 @@ class Ledger:
                 "INSERT OR IGNORE INTO imports VALUES (?, ?, ?)",
                 (digest, datetime.now(UTC).isoformat(), serialized),
             )
-            return {"added": len(additions), "unchanged": unchanged}
+        self.maintain_storage()
+        return {"added": len(additions), "unchanged": unchanged}
 
     def review(
         self,
@@ -253,4 +280,5 @@ class Ledger:
                 "INSERT INTO private_records VALUES ('transactions', ?, ?, 'manual')",
                 (transaction.revision_id, canonical(transaction.model_dump(mode="json"))),
             )
-            return transaction
+        self.maintain_storage()
+        return transaction

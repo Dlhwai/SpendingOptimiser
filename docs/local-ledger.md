@@ -161,9 +161,12 @@ Uploaded bodies are bounded to 2 MiB. This ledger workflow makes no model calls 
 transaction telemetry. The separate [safe-reference AI workflow](subscription-ai.md)
 never receives imported private data. Tests and smoke validation use synthetic material.
 
-There is no multi-user login, encryption at rest, retention/deletion UI, migrations beyond
-local database format 1, automatic backups, ledger-table pagination, or production hosting
-support. Do not expose the service through a proxy, LAN bind, or tunnel; the local
+There is no multi-user login, application-level encryption at rest, deletion UI,
+automatic backups, ledger-table pagination, or production hosting support.
+[Storage & archives](storage.md) adds lossless older-detail compression above
+1 decimal GB and account-scoped saved-month restoration. Local database format 1
+upgrades additively to format 2; JSON schema stays 1.0. All ledger records and
+history remain uncompressed; maintenance runs separately after primary writes. Do not expose the service through a proxy, LAN bind, or tunnel; the local
 OS user and other software on the machine remain trusted. All database readers
 can see private material. For a backup, stop the service and copy the database
 (and any SQLite sidecars if present) to a private location. Protect backups like
