@@ -16,7 +16,8 @@ part of this change.
   official issuer origins (DBS `www.dbs.com.sg`/`dbs.com.sg`, Maybank Singapore
   `www.maybank2u.com.sg`, Trust Bank `trustbank.sg`), each with official start pages.
   On an explicit **Find and capture official terms** request, the app follows
-  same-issuer links best-first from those pages, fetching at most 8 documents, and
+  same-issuer links best-first from those pages, making at most 8 HTTPS requests
+  (redirects included) within 45 seconds in total, and
   captures pages whose own text contains your product words and "terms"/"conditions".
   Your words are matched locally and never sent as a search query. Nothing runs on
   page views or timers. New or changed documents need no code change; a newer capture
@@ -24,10 +25,12 @@ part of this change.
 - **Retrieval boundary.** HTTPS only, port 443, no credentials in URLs, every hop
   (including redirects, at most 3) must stay on the issuer's listed hosts. Hostnames
   must resolve only to public addresses and the connection is pinned to a checked
-  address. No proxy, cookies, authorization or session headers. Responses are bounded
-  (2 MiB, 15 s), only `text/html`/`text/plain` are read, scripts/styles are dropped and
-  extracted text over 24,000 characters is refused. PDFs, other sites, failed or
-  oversized documents and searches that hit the fetch bound are shown as unavailable.
+  address. No proxy, cookies, authorization or session headers. Bodies are read in
+  chunks capped at 2 MiB; each blocking read waits at most 15 s and never past the
+  import's 45-second deadline. Captures made before the deadline are kept. Only
+  `text/html`/`text/plain` are read, scripts/styles are dropped and extracted text
+  over 24,000 characters is refused. PDFs, other sites, failed, malformed or oversized
+  documents and searches that hit the request or time budget are shown as unavailable.
 - **Authority.** Only the importer writes terms snapshots. Each stores the issuer,
   final URL, retrieval time, content SHA-256 and exact extracted text; the preview
   fingerprint covers that saved body. Imported ledger `SourceEvidence` and pasted

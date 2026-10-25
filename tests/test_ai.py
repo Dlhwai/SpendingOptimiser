@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from spending_optimiser import public_terms
 from spending_optimiser._gmail_mime import TextPart
 from spending_optimiser.ai_inputs import (
     INSTRUCTIONS,
@@ -29,7 +30,14 @@ from spending_optimiser.codex_client import CONFIG, AIProblem, CodexClient, conf
 from spending_optimiser.gmail import Candidate
 from spending_optimiser.gmail_auth import NativeStore
 from spending_optimiser.ledger import Conflict, Ledger
-from spending_optimiser.public_terms import MAX_FETCHES, FetchProblem, https_get
+from spending_optimiser.public_terms import (
+    MAX_FETCHES,
+    Budget,
+    FetchProblem,
+    discover,
+    https_get,
+    read_body,
+)
 from spending_optimiser.transactions import Observation
 from spending_optimiser.web import create_app
 
@@ -360,7 +368,7 @@ def test_public_retrieval_refuses_private_destinations_before_connecting(monkeyp
     for address in ("127.0.0.1", "10.0.0.8", "169.254.169.254", "::1", "fd00::1"):
         resolver = lambda host, port, type: [(None, None, None, None, (address, port))]  # noqa: B023,E731
         with pytest.raises(FetchProblem, match="private or local"):
-            https_get(DBS + "dbs-yuu-terms", resolve=resolver)
+            https_get(DBS + "dbs-yuu-terms", Budget(), resolve=resolver)
 
     def mixed(host, port, type):
         return [
@@ -369,7 +377,7 @@ def test_public_retrieval_refuses_private_destinations_before_connecting(monkeyp
         ]
 
     with pytest.raises(FetchProblem, match="private or local"):
-        https_get(DBS + "dbs-yuu-terms", resolve=mixed)
+        https_get(DBS + "dbs-yuu-terms", Budget(), resolve=mixed)
 
 
 def test_public_terms_review_is_versioned_uncertain_and_never_changes_ledger(app, client):
@@ -401,6 +409,112 @@ def test_public_terms_review_is_versioned_uncertain_and_never_changes_ledger(app
     document = app.state.ledger.load()
     assert not document.transactions and not document.rules
     assert "accepted" in client.get("/ai").text
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+def yuu_terms(text="yuu card terms and conditions"):
+    return html(text, "Spend S$800 monthly.")
+
+
+def test_malformed_redirect_ports_are_unavailable_and_keep_found_documents():
+    pages = {
+        DBS + "dbs-yuu-cards": html(
+            "yuu", links=[(name, "yuu terms") for name in ("a", "b", "c", "d", "e")]
+        ),
+        DBS + "a": yuu_terms(),
+        DBS + "b": (302, {"location": "https://www.dbs.com.sg:99999/x"}, b""),
+        DBS + "c": (302, {"location": "https://www.dbs.com.sg:-1/x"}, b""),
+        DBS + "d": (302, {"location": "https://www.dbs.com.sg:abc/x"}, b""),
+        DBS + "e": (302, {"location": "/personal/cards/credit-cards/final"}, b""),
+        DBS + "final": yuu_terms("yuu product terms"),
+    }
+    transport = PREVIEW.PreviewPublicTransport(pages)
+    found, problems, _ = discover("dbs", "yuu", transport)
+    assert [item.final_url for item in found] == [DBS + "a", DBS + "final"]
+    assert sum("malformed" in problem for problem in problems) == 3
+    assert len(transport.requests) <= MAX_FETCHES
+
+
+def test_redirect_chains_share_the_import_request_budget():
+    pages = {DBS + "dbs-yuu-cards": html("yuu", links=[(f"r{i}", "yuu terms") for i in range(9)])}
+    for i in range(9):
+        pages[DBS + f"r{i}"] = (302, {"location": f"r{i}-next"}, b"")
+        pages[DBS + f"r{i}-next"] = (302, {"location": f"r{i}-last"}, b"")
+    transport = PREVIEW.PreviewPublicTransport(pages)
+    found, problems, complete = discover("dbs", "yuu", transport)
+    assert len(transport.requests) == MAX_FETCHES
+    assert not found and not complete
+    assert any("request budget exhausted" in problem for problem in problems)
+
+
+def test_total_import_deadline_ends_retrieval_and_preserves_found_documents():
+    clock = FakeClock()
+    pages = {
+        DBS + "dbs-yuu-cards": html(
+            "yuu card terms and conditions",
+            "Spend S$800 monthly.",
+            links=[(f"more{i}", "yuu terms") for i in range(6)],
+        )
+    }
+    inner = PREVIEW.PreviewPublicTransport(pages)
+
+    def slow(url, budget):
+        clock.now += 20
+        return inner(url, budget)
+
+    found, problems, complete = discover("dbs", "yuu", slow, clock=clock)
+    assert [item.final_url for item in found] == [DBS + "dbs-yuu-cards"]
+    assert len(inner.requests) == 3 and not complete
+
+
+def test_slow_dribbling_body_cannot_outlast_the_import_deadline():
+    clock = FakeClock()
+    budget = Budget(clock)
+    timeouts = []
+
+    class Dribble:
+        def read1(self, size):
+            clock.now += 14
+            return b"x"
+
+    with pytest.raises(FetchProblem, match="time budget exhausted"):
+        read_body(Dribble(), budget, timeouts.append)
+    assert clock.now - 1000.0 <= public_terms.IMPORT_SECONDS + public_terms.TIMEOUT
+    assert all(0 < limit <= public_terms.TIMEOUT for limit in timeouts)
+
+
+def test_import_timeout_keeps_safe_captures_and_never_starts_ai(app, client, monkeypatch):
+    ai = app.state.ai
+    ai.connect()
+    monkeypatch.setattr(public_terms, "IMPORT_SECONDS", 0.05)
+    pages = {
+        DBS + "dbs-yuu-cards": html(
+            "yuu card terms and conditions",
+            "Spend S$800 monthly.",
+            links=[("slow", "yuu terms"), ("never", "yuu terms")],
+        )
+    }
+    inner = PREVIEW.PreviewPublicTransport(pages)
+
+    def slow(url, budget):
+        if url.endswith("slow"):
+            time.sleep(0.06)
+        return inner(url, budget)
+
+    ai.transport = slow
+    response = post(client, "/ai/import", issuer="dbs", query="yuu")
+    assert "1 official document(s) captured" in response.text
+    assert "may not have been found" in response.text
+    assert DBS + "never" not in inner.requests
+    assert [item["status"] for item in ai.snapshots()] == ["current"]
+    assert not ai.client.inputs
 
 
 def test_different_public_term_values_are_typed_from_cited_evidence(app):

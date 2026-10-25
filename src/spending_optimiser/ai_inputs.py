@@ -235,7 +235,7 @@ def parse_format(layout, text):
     elif values.get("date_dmy"):
         when = datetime.strptime(values["date_dmy"], "%d/%m/%Y").date()
     return {
-        "money": money(values["currency"], values["amount"], values["fraction"] or "").model_dump(),
+        "money": amount.model_dump(),
         "merchant": values.get("merchant"),
         "date": None if when is None else when.isoformat(),
         "card_suffix": values.get("card_suffix"),

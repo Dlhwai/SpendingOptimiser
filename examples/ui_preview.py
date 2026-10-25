@@ -46,7 +46,7 @@ class PreviewPublicTransport:
         self.pages = dict(PREVIEW_PAGES if pages is None else pages)
         self.requests = []
 
-    def __call__(self, url):
+    def __call__(self, url, budget):
         self.requests.append(url)
         page = self.pages.get(url)
         if page is None:

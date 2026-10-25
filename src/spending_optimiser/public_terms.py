@@ -1,7 +1,8 @@
 """Explicit, bounded retrieval of public terms from a closed set of official issuer origins.
 
 Not a crawler, search broker or monitor: it runs only inside an explicit import request,
-fetches at most MAX_FETCHES same-issuer HTTPS documents, and sends no query anywhere.
+makes at most MAX_FETCHES same-issuer HTTPS requests (redirects included) within
+IMPORT_SECONDS, and sends no query anywhere.
 """
 
 import http.client
@@ -9,6 +10,7 @@ import ipaddress
 import re
 import socket
 import ssl
+import time
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.parse import urldefrag, urljoin, urlsplit
@@ -40,12 +42,35 @@ MAX_BYTES = 2 * 1024 * 1024
 MAX_TEXT = 24_000
 MAX_RESULTS = 3
 TIMEOUT = 15
+IMPORT_SECONDS = 45
 SKIP = {"script", "style", "noscript", "template", "svg", "head"}
 BLOCK = {"p", "div", "li", "br", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "section", "table"}
 
 
 class FetchProblem(ValueError):
     pass
+
+
+class Budget:
+    """One shared request count and monotonic deadline for a whole import."""
+
+    def __init__(self, clock=time.monotonic):
+        self.clock, self.deadline, self.fetches = clock, clock() + IMPORT_SECONDS, MAX_FETCHES
+
+    def exhausted(self):
+        return self.fetches <= 0 or self.clock() >= self.deadline
+
+    def remaining(self):
+        left = self.deadline - self.clock()
+        if left <= 0:
+            raise FetchProblem("Import time budget exhausted")
+        return left
+
+    def spend(self):
+        self.remaining()
+        if self.fetches <= 0:
+            raise FetchProblem("Import request budget exhausted")
+        self.fetches -= 1
 
 
 @dataclass(frozen=True)
@@ -67,20 +92,39 @@ def keywords(query):
     return words[:6]
 
 
-def official(issuer, url):
-    parts = urlsplit(url)
+def official(issuer, url, base=None):
+    try:
+        url = url if base is None else urljoin(base, url)
+        parts = urlsplit(url)
+        port, host = parts.port, parts.hostname
+    except ValueError:
+        raise FetchProblem("Destination URL is malformed") from None
     if (
         parts.scheme != "https"
         or parts.username
         or parts.password
-        or parts.port not in {None, 443}
-        or parts.hostname not in ISSUERS[issuer]["hosts"]
+        or port not in {None, 443}
+        or host not in ISSUERS[issuer]["hosts"]
     ):
         raise FetchProblem("Destination is not an official HTTPS origin for this issuer")
     return urldefrag(url)[0]
 
 
-def https_get(url, resolve=socket.getaddrinfo):
+def read_body(response, budget, settimeout):
+    """Bounded chunks; every blocking read is limited by the import's remaining time."""
+    chunks, size = [], 0
+    while True:
+        settimeout(min(TIMEOUT, budget.remaining()))
+        chunk = response.read1(65536)
+        if not chunk:
+            return b"".join(chunks)
+        size += len(chunk)
+        if size > MAX_BYTES:
+            raise FetchProblem("Official document exceeds the retrieval bound")
+        chunks.append(chunk)
+
+
+def https_get(url, budget, resolve=socket.getaddrinfo):
     """One GET to a resolved public address, no proxy, cookies, credentials or redirects."""
     parts = urlsplit(url)
     host = parts.hostname
@@ -94,9 +138,11 @@ def https_get(url, resolve=socket.getaddrinfo):
     class Pinned(http.client.HTTPSConnection):
         def connect(self):
             sock = socket.create_connection((sorted(addresses)[0], 443), self.timeout)
-            self.sock = self._context.wrap_socket(sock, server_hostname=host)
+            self.sock = self.tls = self._context.wrap_socket(sock, server_hostname=host)
 
-    connection = Pinned(host, 443, timeout=TIMEOUT, context=ssl.create_default_context())
+    connection = Pinned(
+        host, 443, timeout=min(TIMEOUT, budget.remaining()), context=ssl.create_default_context()
+    )
     try:
         connection.request(
             "GET",
@@ -107,7 +153,7 @@ def https_get(url, resolve=socket.getaddrinfo):
             },
         )
         response = connection.getresponse()
-        body = response.read(MAX_BYTES + 1)
+        body = read_body(response, budget, connection.tls.settimeout)
         return response.status, {k.lower(): v for k, v in response.getheaders()}, body
     except (OSError, http.client.HTTPException):
         raise FetchProblem("Official document retrieval failed") from None
@@ -152,12 +198,13 @@ def clean(text):
     return "\n".join(line for line in lines if line)
 
 
-def retrieve(issuer, url, transport):
+def retrieve(issuer, url, transport, budget):
     url = official(issuer, url)
     for _ in range(MAX_REDIRECTS + 1):
-        status, headers, body = transport(url)
+        budget.spend()
+        status, headers, body = transport(url, budget)
         if status in {301, 302, 303, 307, 308}:
-            url = official(issuer, urljoin(url, headers.get("location", "")))
+            url = official(issuer, headers.get("location", ""), base=url)
             continue
         if status != 200:
             raise FetchProblem(f"Official document returned HTTP {status}")
@@ -180,15 +227,15 @@ def retrieve(issuer, url, transport):
         links = []
         for href, label in page.links:
             try:
-                links.append((official(issuer, urljoin(url, href)), label))
-            except (FetchProblem, ValueError):
+                links.append((official(issuer, href, base=url), label))
+            except FetchProblem:
                 continue
         text = clean("".join(p) for p in page.lines)
         return Document(issuer, url, kind, text, tuple(links), " ".join(page.body))
     raise FetchProblem("Too many redirects")
 
 
-def discover(issuer, query, transport):
+def discover(issuer, query, transport, clock=time.monotonic):
     """Best-first, same-issuer link following from the official start pages."""
     if issuer not in ISSUERS:
         raise ValueError("Choose an issuer from the official source collection")
@@ -202,16 +249,15 @@ def discover(issuer, query, transport):
 
     queue = [(10, url) for url in ISSUERS[issuer]["start"]]
     seen, found, problems = set(), [], []
-    fetches = 0
-    while queue and fetches < MAX_FETCHES and len(found) < MAX_RESULTS:
+    budget = Budget(clock)
+    while queue and len(found) < MAX_RESULTS and not budget.exhausted():
         queue.sort(key=lambda item: -item[0])
         _, url = queue.pop(0)
         if url in seen:
             continue
         seen.add(url)
-        fetches += 1
         try:
-            document = retrieve(issuer, url, transport)
+            document = retrieve(issuer, url, transport, budget)
         except FetchProblem as exc:
             problems.append(f"{url}: {exc}")
             continue
