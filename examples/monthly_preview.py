@@ -9,6 +9,7 @@ from monthly_fixture import monthly_document
 from ui_preview import PreviewTransport, preview_app
 
 from spending_optimiser.gmail import GmailRestClient
+from spending_optimiser.monthly import calendar_month
 
 
 class MonthlyTransport(PreviewTransport):
@@ -16,7 +17,7 @@ class MonthlyTransport(PreviewTransport):
         parsed = urlparse(url)
         query = parse_qs(parsed.query)
         if parsed.path.endswith("/messages"):
-            if "after:1738339199 before:1740758400" != query.get("q", [""])[0]:
+            if calendar_month("2025-02").query != query.get("q", [""])[0]:
                 return {}
             token = query.get("pageToken", [None])[0]
             return {

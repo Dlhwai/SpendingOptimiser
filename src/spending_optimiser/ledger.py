@@ -75,6 +75,7 @@ def needs_review(transaction: Transaction) -> bool:
 
 class Ledger:
     def __init__(self, path: str | Path):
+        self.maintenance_warning = None
         self.path = Path(path).expanduser().resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         # Restrict new DBs before SQLite writes financial content, without changing umask.
@@ -130,9 +131,15 @@ class Ledger:
             return self._load(db)
 
     def maintain_storage(self):
-        from .storage import Storage
+        from .storage import MAINTENANCE_WARNING, Storage
 
-        return Storage(self).compress_if_needed()
+        try:
+            result = Storage(self).compress_if_needed()
+        except (sqlite3.Error, OSError):
+            self.maintenance_warning = MAINTENANCE_WARNING
+            return None
+        self.maintenance_warning = result.get("warning")
+        return result
 
     def import_snapshot(self, digest: str) -> str:
         """Read the exact canonical import receipt, whether hot or compressed."""

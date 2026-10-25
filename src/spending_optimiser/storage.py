@@ -15,6 +15,10 @@ from .document import SchemaDocument, walk
 from .monthly import SINGAPORE, calendar_month
 
 GB = 1_000_000_000
+MAINTENANCE_WARNING = (
+    "Storage maintenance could not finish. Completed writes remain saved. "
+    "Check disk space/access and retry in Storage & archives."
+)
 MAGIC = b"SOZ1"
 HEADER = struct.Struct(">4sQ32s")
 # Larger/unknown payloads remain ordinary text, not discarded or truncated.
@@ -225,21 +229,23 @@ class Storage:
                 except (ValueError, RecursionError):
                     skipped += 1
         compacted = False
-        if compressed:
-            try:
-                with self.ledger.connection() as db:
+        warning = None
+        try:
+            with self.ledger.connection() as db:
+                if compressed or db.execute("PRAGMA freelist_count").fetchone()[0]:
                     db.execute("VACUUM")
-                compacted = True
-            except sqlite3.Error:
-                # Compression is already committed and recoverable. Free pages may
-                # remain allocated until a later successful compaction.
-                pass
-        return {
+                    compacted = True
+        except sqlite3.Error:
+            warning = MAINTENANCE_WARNING
+        result = {
             "compressed": compressed,
             "skipped": skipped,
             "compacted": compacted,
             "above": self.status()["above"],
         }
+        if warning:
+            result["warning"] = warning
+        return result
 
     def mail_archived(self, namespace, month):
         """Count only this identity's selected month, including earlier versions."""

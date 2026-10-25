@@ -359,7 +359,8 @@ def test_hot_financial_provenance_and_unsupported_content_stay_intact(tmp_path):
     assert versions(service) == original
 
 
-def test_failed_compaction_preserves_committed_archive(tmp_path, monkeypatch):
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_compaction_failure_preserves_archive_and_can_retry(tmp_path, monkeypatch, interrupted):
     from contextlib import contextmanager
 
     service, _, storage = seed(tmp_path)
@@ -373,6 +374,8 @@ def test_failed_compaction_preserves_committed_archive(tmp_path, monkeypatch):
 
         def execute(self, sql, *args):
             if sql == "VACUUM":
+                if interrupted:
+                    raise RuntimeError("synthetic interruption before compaction")
                 raise sqlite3.OperationalError("synthetic disk full")
             return self.db.execute(sql, *args)
 
@@ -382,10 +385,145 @@ def test_failed_compaction_preserves_committed_archive(tmp_path, monkeypatch):
             yield VacuumFailure(db)
 
     monkeypatch.setattr(storage.ledger, "connection", connection)
-    result = storage.compress_if_needed(now=NOW)
-    assert result["compressed"] == 1 and not result["compacted"] and result["above"]
+    if interrupted:
+        with pytest.raises(RuntimeError, match="interruption"):
+            storage.compress_if_needed(now=NOW)
+    else:
+        result = storage.compress_if_needed(now=NOW)
+        assert result["compressed"] == 1 and not result["compacted"] and result["above"]
+        assert "Completed writes remain saved" in result["warning"]
     assert unpack(versions(service)[0][3]) == original[0][3]
     assert service.saved_month(FEB)[0]["old"].text
+    with storage.ledger.connection() as db:
+        assert db.execute("PRAGMA freelist_count").fetchone()[0] > 0
+    allocated = storage.ledger.path.stat().st_size
+    monkeypatch.setattr(storage.ledger, "connection", connect)
+    result = storage.compress_if_needed(now=NOW)
+    assert result == {"compressed": 0, "skipped": 0, "compacted": True, "above": True}
+    assert storage.ledger.path.stat().st_size < allocated
+    assert unpack(versions(service)[0][3]) == original[0][3]
+    assert storage.compress_if_needed(now=NOW) == {
+        "compressed": 0,
+        "skipped": 0,
+        "compacted": False,
+        "above": True,
+    }
+
+
+@pytest.mark.parametrize("operation", ["import", "example", "review", "mail", "retry"])
+@pytest.mark.parametrize("failure", ["compression", "compression_io", "compaction", "precommit"])
+def test_write_responses_distinguish_commits_from_maintenance_failures(
+    tmp_path, monkeypatch, operation, failure
+):
+    service, fake, storage = seed(tmp_path)
+    app = create_app(storage.ledger.path, gmail_service=service)
+    ledger = app.state.ledger
+    document = FIXTURE.monthly_document()
+    if operation == "review":
+        ledger.import_document(document.model_dump_json())
+    if operation == "retry":
+        fake.pages = {None: {"messages": [{"id": "old"}, {"id": "new"}]}}
+        fake.broken = {"new"}
+        load(service, action="refresh")
+        fake.broken.clear()
+    fake.pages = {None: {"messages": [{"id": "old"}, {"id": "new"}]}}
+    before = ledger.load()
+    before_versions = versions(service)
+    before_scan = service.saved_month(FEB)[1]
+    client = TestClient(app, base_url="http://127.0.0.1:8898")
+    client.get("/imports")
+    fields = {"csrf": client.cookies["ledger_csrf"]}
+    if operation == "import":
+        path = "/import"
+        fields["document"] = document.model_dump_json()
+    elif operation == "example":
+        path = "/example"
+        document = SchemaDocument.model_validate_json(
+            (Path(__file__).parent / "fixtures/synthetic.json").read_text()
+        )
+    elif operation == "review":
+        path = "/review"
+        fields.update(
+            revision_id="weekly-groceries-v2", actor="Synthetic", reason="Checked", status="rejected"
+        )
+    else:
+        path = "/gmail/month"
+        fields.update(
+            month=FEB.key,
+            pages="1",
+            connection_id=service.connection_id,
+            action="retry" if operation == "retry" else "refresh",
+        )
+
+    with monkeypatch.context() as patch:
+        if failure == "precommit":
+            table = (
+                "imports"
+                if operation in {"import", "example"}
+                else "private_records"
+                if operation == "review"
+                else "mail_scans"
+            )
+            with ledger.connection() as db:
+                db.execute(
+                    f"CREATE TRIGGER fail_write BEFORE INSERT ON {table} "
+                    "BEGIN SELECT RAISE(ABORT, 'synthetic disk full'); END"
+                )
+        else:
+            patch.setattr("spending_optimiser.storage.GB", 1)
+            if failure == "compaction":
+                connect = sqlite3.connect
+
+                class VacuumFailure(sqlite3.Connection):
+                    def execute(self, sql, *args):
+                        if sql == "VACUUM":
+                            raise sqlite3.OperationalError("synthetic disk full")
+                        return super().execute(sql, *args)
+
+                def connection(*args, **kwargs):
+                    return connect(*args, **kwargs, factory=VacuumFailure)
+
+                patch.setattr(sqlite3, "connect", connection)
+            else:
+
+                def fail_pack(text):
+                    if failure == "compression_io":
+                        raise OSError("synthetic disk full")
+                    raise sqlite3.OperationalError("synthetic disk full")
+
+                patch.setattr("spending_optimiser.storage.pack", fail_pack)
+        response = client.post(path, data=fields)
+
+    persisted = Ledger(ledger.path)
+    if failure == "precommit":
+        assert response.status_code == 503 and "Request not saved" in response.text
+        assert "Storage maintenance could not finish" not in response.text
+        assert persisted.load() == before
+        assert versions(service) == before_versions
+        assert service.saved_month(FEB)[1] == before_scan
+        return
+    assert response.status_code == 200 and "Request not saved" not in response.text
+    assert "Storage maintenance could not finish" in response.text
+    assert "Completed writes remain saved" in response.text
+    if operation in {"import", "example"}:
+        assert persisted.load() == document
+        assert "new records" in response.text
+        with persisted.connection() as db:
+            assert db.execute("SELECT count(*) FROM imports").fetchone()[0] == 1
+    elif operation == "review":
+        transactions = persisted.load().transactions
+        assert len(transactions) == len(before.transactions) + 1
+        assert sum(t.supersedes == "weekly-groceries-v2" for t in transactions) == 1
+        assert "revisions preserved" in response.text
+    else:
+        assert set(service.saved_month(FEB)[0]) == {"old", "new"}
+        assert len(versions(service)) == len(before_versions) + 1
+        assert "2 saved candidates" in response.text
+        state = service.saved_month(FEB)[1]
+        assert state["exhausted"] and state["pages"] == 1 and state["failed"] == {}
+    response = client.post("/storage/compress", data={"csrf": client.cookies["ledger_csrf"]})
+    assert response.status_code == 200
+    assert "Storage maintenance could not finish" not in response.text
 
 
 def test_existing_v1_migration_and_automatic_write_path(tmp_path, monkeypatch):

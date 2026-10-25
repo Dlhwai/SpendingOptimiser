@@ -134,7 +134,13 @@ def create_app(
         response = templates.TemplateResponse(
             request=request,
             name=name,
-            context={"csrf": csrf, **context},
+            context={
+                "csrf": csrf,
+                "maintenance_warning": (
+                    ledger.maintenance_warning or gmail.cache.ledger.maintenance_warning
+                ),
+                **context,
+            },
             status_code=status_code,
         )
         response.set_cookie("ledger_csrf", csrf, httponly=True, samesite="strict")
@@ -246,6 +252,8 @@ def create_app(
     async def storage_compress(request: Request):
         await form_data(request, set())
         app.state.storage_result = await run_in_threadpool(storage.compress_if_needed)
+        for owner in (ledger, gmail.cache.ledger):
+            owner.maintenance_warning = app.state.storage_result.get("warning")
         return RedirectResponse("/storage", status_code=303)
 
     @app.post("/storage/restore")
@@ -537,7 +545,7 @@ def create_app(
                 raise HTTPException(422, "file must be an uploaded JSON document")
             if not text.strip():
                 raise HTTPException(422, "Select a JSON file or paste a schema document")
-            return import_result(text)
+            return await run_in_threadpool(import_result, text)
         finally:
             await form.close()
 
@@ -545,14 +553,14 @@ def create_app(
     async def example(request: Request):
         await form_data(request, set())
         text = files("spending_optimiser").joinpath("examples/synthetic.json").read_text()
-        return import_result(text)
+        return await run_in_threadpool(import_result, text)
 
     @app.post("/review")
     async def review(request: Request):
         fields = {"revision_id", "actor", "reason", "status", "field", "fact_json"}
         form = await form_data(request, fields)
         values = {name: text_field(form, name) for name in fields}
-        transaction = ledger.review(**values)
+        transaction = await run_in_threadpool(ledger.review, **values)
         return RedirectResponse(
             "/transaction?" + urlencode({"event_id": transaction.event_id}), status_code=303
         )

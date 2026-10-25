@@ -394,6 +394,51 @@ def test_persistent_message_failure_does_not_block_later_pages_and_has_targeted_
     assert set(restarted.saved_month(calendar_month("2025-02"))[0]) == {"a", "bad", "c"}
 
 
+@pytest.mark.parametrize("retry_pages", [1, 5])
+def test_bounded_failed_retries_rotate_persisted_order_without_starvation(tmp_path, retry_pages):
+    path = tmp_path / "synthetic.sqlite3"
+    service, fake = connected(path)
+    identities = [f"bad-{i:03}" for i in range(101)]
+    fake.broken = set(identities)
+    fake.pages = {
+        None if i == 0 else str(i): {
+            "messages": [{"id": identity} for identity in identities[i : i + 20]],
+            **({"nextPageToken": str(i + 20)} if i + 20 < len(identities) else {}),
+        }
+        for i in range(0, len(identities), 20)
+    }
+    load(service, pages=5)
+    candidates, state = load(service)
+    assert candidates == {} and state["exhausted"] and state["pages"] == 6
+    assert list(state["failed"]) == identities
+    other, _ = connected(path, fake, subject="account-B")
+    other_before = other.saved_month(calendar_month("2025-02"))
+    march_before = service.saved_month(calendar_month("2025-03"))
+    fake.broken.remove(identities[-1])
+    calls = len(fake.calls)
+    batch = retry_pages * 20
+    candidates, state = load(service, pages=retry_pages, action="retry")
+    assert fake.calls[calls:] == [("get", identity) for identity in identities[:batch]]
+    assert list(state["failed"]) == identities[batch:] + identities[:batch]
+    assert len(state["failed"]) == 101 and state["duplicates"] == 0
+    assert "coverage is incomplete" in service.notice
+    service, _ = connected(path, fake)
+    assert list(service.saved_month(calendar_month("2025-02"))[1]["failed"]) == list(state["failed"])
+    for _ in range((len(identities) - 1) // batch):
+        candidates, state = load(service, pages=retry_pages, action="retry")
+    assert set(candidates) == {identities[-1]}
+    assert len(state["failed"]) == 100 and identities[-1] not in state["failed"]
+    assert state["seen"] == [identities[-1]]
+    assert (state["pages"], state["duplicates"], state["exhausted"]) == (6, 0, True)
+    assert "100 unresolved messages" in service.notice and "coverage is incomplete" in service.notice
+    assert fake.calls[calls:].count(("get", identities[-1])) == 1
+    assert all(kind == "get" for kind, _ in fake.calls[calls:])
+    assert other.saved_month(calendar_month("2025-02")) == other_before
+    assert service.saved_month(calendar_month("2025-03")) == march_before
+    with service.cache.ledger.connection() as db:
+        assert db.execute("SELECT count(*) FROM mail_versions").fetchone()[0] == 1
+
+
 def test_retried_pages_do_not_inflate_page_or_duplicate_counts(tmp_path):
     service, fake = connected(tmp_path / "test.sqlite3")
     fake.pages = {None: {"messages": [{"id": "a"}, {"id": "a"}, {"id": "bad"}, {"id": "b"}]}}
