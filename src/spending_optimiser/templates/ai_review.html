@@ -6,7 +6,7 @@
 {% if record.result.kind == 'terms' %}
 {% if record.result.usable %}{% set threshold = record.result.rule.minimum_spend.value[0].threshold.value %}<p>Proposed minimum spend: <strong>{{ threshold.currency }} {{ threshold.minor_units }} minor units</strong>.</p>{% else %}<p>No supported threshold was established.</p>{% endif %}
 <p>Other qualifiers remain in the exact evidence below. This is not a verified, complete or executable rewards rule.</p>
-<h3>Public source evidence</h3><p>{{ record.result.rule.minimum_spend.evidence[0].quote if record.result.usable else 'No evidenced value proposed.' }}</p><p class="small text-wrap">{{ record.result.evidence.url }}<br>{{ record.result.evidence.document_version or 'Version undisclosed' }}</p>
+<h3>Public source evidence</h3><p>{{ record.result.rule.minimum_spend.evidence[0].quote if record.result.usable else 'No evidenced value proposed.' }}</p><p class="small text-wrap">Official capture: {{ record.result.evidence.url }}<br>Retrieved by this app {{ record.result.evidence.retrieved_at }}</p>
 {% else %}
 {% if record.result.layout %}<p>Proposed placeholder roles:</p><pre>{{ record.result.layout.template }}</pre><ul>{% for marker, role in record.result.layout.fields.items() %}<li>{{ marker }} → {{ role }}</li>{% endfor %}</ul>{% else %}<p>No supported structure established.</p>{% endif %}
 {% if record.result.synthetic_test %}<p><strong>Deterministic synthetic check passed.</strong> SGD 12.34 · fictional values only.</p>{% endif %}

@@ -12,39 +12,52 @@ part of this change.
   This milestone qualifies unmanaged clients only: any effective MDM, local-admin
   or cloud requirements cause refusal, not an attempt to override policy.
   The native binary checksum is pinned to the version used for enforcement proof.
-- Saving snapshots of public terms or bank-message placeholder structures from
-  **public source-evidence records already in this ledger** (the `evidence`
-  collection shown under Public data). The saved text must exactly match the
-  record's `content_sha256`; superseded, rejected or digest-less records are refused.
-  New or changed terms and formats therefore need a new public evidence revision,
-  not a code change.
-- Public terms: the model returns one stated minimum-spend threshold (ISO currency,
-  integer minor units) and an exact quote. The app accepts it only if the quote is
-  contiguous text of the saved content and its deterministic amount reader finds that
-  exact amount in the quote. The result is a proposed `RuleRevision`/`MinimumSpend`
-  citing the evidence revision. Period basis, timezone, earning rates, eligibility,
-  applicability, caps and effective dates remain unknown. Uncertain answers stay null.
-- Format structures: one line where every value is a distinct `<ROLE>` placeholder;
-  digits, `@` and raw text are refused. The model maps each placeholder to a fixed
-  role (currency, amount, merchant, date_iso, date_dmy, card_suffix), never Python,
-  shell or regex. The app requires every placeholder mapped exactly once, then
-  round-trips fictional values through its fixed role patterns.
+- **Official public terms importer.** A closed collection of independently checked
+  official issuer origins (DBS `www.dbs.com.sg`/`dbs.com.sg`, Maybank Singapore
+  `www.maybank2u.com.sg`, Trust Bank `trustbank.sg`), each with official start pages.
+  On an explicit **Find and capture official terms** request, the app follows
+  same-issuer links best-first from those pages, fetching at most 8 documents, and
+  captures pages whose own text contains your product words and "terms"/"conditions".
+  Your words are matched locally and never sent as a search query. Nothing runs on
+  page views or timers. New or changed documents need no code change; a newer capture
+  of the same URL makes older snapshots stale.
+- **Retrieval boundary.** HTTPS only, port 443, no credentials in URLs, every hop
+  (including redirects, at most 3) must stay on the issuer's listed hosts. Hostnames
+  must resolve only to public addresses and the connection is pinned to a checked
+  address. No proxy, cookies, authorization or session headers. Responses are bounded
+  (2 MiB, 15 s), only `text/html`/`text/plain` are read, scripts/styles are dropped and
+  extracted text over 24,000 characters is refused. PDFs, other sites, failed or
+  oversized documents and searches that hit the fetch bound are shown as unavailable.
+- **Authority.** Only the importer writes terms snapshots. Each stores the issuer,
+  final URL, retrieval time, content SHA-256 and exact extracted text; the preview
+  fingerprint covers that saved body. Imported ledger `SourceEvidence` and pasted
+  text cannot create or replace an outbound terms snapshot.
+- Public terms analysis: the model returns one stated minimum-spend threshold (ISO
+  currency, integer minor units) and an exact quote. The app requires the quote to be
+  contiguous saved text and a complete amount, read from the full saved source, whose
+  span lies inside the quote. Partial matches such as `S$800` inside `US$800`,
+  `S$800.50` or `S$8000` are refused. The result is a proposed
+  `RuleRevision`/`MinimumSpend` citing the capture with character offsets. Period
+  basis, timezone, earning rates, eligibility, applicability, caps and effective dates
+  remain unknown. Uncertain answers stay null.
+- Format structures: one line of distinct `<ROLE>` placeholders and words from a fixed
+  vocabulary of common notification words. Names, digits, `@` and raw text are refused.
+  The model maps each placeholder to a fixed role (currency, amount, merchant,
+  date_iso, date_dmy, card_suffix), never Python, shell or regex. The app requires every
+  placeholder mapped exactly once, then round-trips fictional values through its fixed
+  role patterns.
 - Explicit review with immutable accept/reject decisions and accepted-version
   ancestry. Accepted terms are a versioned reference. The current accepted format
-  layouts are applied locally to loaded Gmail candidates: a single unambiguous
-  matching line becomes an unsaved, review-pending `Transaction` proposal on the
-  Mail page. No model is called, nothing is written to the ledger and no rewards
-  are calculated.
+  layouts are applied locally to loaded Gmail candidates: a single unambiguous,
+  non-zero matching line becomes an unsaved, review-pending `Transaction` proposal on
+  the Mail page. Zero or invalid matches are skipped. No model is called, nothing is
+  written to the ledger and no rewards are calculated.
 
-Saved snapshots whose evidence was later superseded are listed as stale, and rows
-the current validator cannot read are listed as unsupported; neither can be previewed
-or analysed. There is no web search, general parser language, terms monitoring,
-reward optimizer or private-history analysis.
-
-**Remaining gap:** the app cannot prove a third-party document is public without
-fetching it. Publicness is attested by the user's public evidence record and its
-digest, not by a confirmation checkbox or regex scrubber. Placeholder structures are
-also structurally checked, but a literal word in a structure is the user's attestation.
+Snapshots superseded by a newer capture are listed as stale, and rows the current
+validator cannot read are listed as unsupported; neither can be previewed or analysed.
+There is no web search, general crawler, terms monitoring, reward optimizer or
+private-history analysis. Many issuers publish card terms only as PDFs, which are
+currently unavailable rather than partially read.
 
 ## Local setup
 
@@ -74,8 +87,8 @@ weaker controls. Do not upgrade the client without requalifying enforcement.
    Return to the app and select **Check saved session after consent**. Keychain
    must be available/unlocked; there is no plaintext fallback. An eligible cached
    subscription session may instead restore directly on the explicit Connect POST.
-4. Import a public evidence record with `content_sha256`, save the matching text as a
-   terms or format snapshot, inspect its complete application-supplied input,
+4. Capture official terms (or save a placeholder structure), inspect its complete
+   application-supplied input,
    check the consent box and select **Request analysis now**. Nothing is sent by
    Save, preview, a page GET, Gmail loading or an ordinary ledger lookup.
 5. Review the structured result, evidence and unknowns. Accept or reject it.
@@ -183,9 +196,9 @@ uv run --locked python examples/ui_preview.py --port 8893
 
 This is the actual desktop UI with a disposable database, fake cached subscription,
 fake model, fake Gmail and memory-only credentials. **No provider/native credential
-access occurs.** Port 8765 is refused. Synthetic public evidence records are imported.
-Choose Safe AI analysis, Connect, save each record's text, inspect the input, request
-analysis and review/accept/reject. The banner
+access occurs.** Port 8765 is refused. A fake transport serves synthetic DBS-origin
+pages; no network is used. Choose Safe AI analysis, Connect, capture terms for
+`yuu`, save a structure, inspect the input, request analysis and review/accept/reject. The banner
 labels all screens synthetic. Ctrl-C removes the disposable database.
 
 ```sh

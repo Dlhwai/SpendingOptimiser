@@ -1,4 +1,4 @@
-"""Saved snapshots bound to public ledger evidence, not an arbitrary-text privacy scrubber."""
+"""App-captured official terms and allowlisted placeholder structures, not a text scrubber."""
 
 import hashlib
 import re
@@ -10,11 +10,21 @@ from pydantic import Field, StrictInt
 from .common import CURRENCY_EXPONENTS, Currency, EvidenceRef, Fact, Model, Money
 from .evidence import SourceEvidence
 from .ledger import canonical, parse_json
+from .public_terms import ISSUERS, MAX_TEXT, official
 from .rules import MinimumSpend, RuleRevision
 
-MAX_CONTENT = 4000
 MAX_TEMPLATE = 300
-MARKER = re.compile(r"<[A-Za-z][A-Za-z0-9 _-]{0,38}>")
+MARKER = re.compile(r"<[A-Za-z][A-Za-z _-]{0,38}>")
+VOCABULARY = frozenset(
+    """a account alert amount amex an and approved are at bank been by call card cardholder
+    cardmember cards charge charged claimed code contact credit credited currency customer date
+    dbs dd dear debit debited details did digits dmy end ending ends for from has have here if in
+    is iso last made maybank mastercard merchant mm name new no not notification number of on
+    online or our overseas paid pay payment please purchase purchases received ref reference
+    refund refunded reversal sent shop spend spending spent store successful suffix thank thanks
+    the this time to transaction transactions transfer trust txn us using value via visa was we
+    were with you your yyyy""".split()
+)
 ROLES = ("currency", "amount", "merchant", "date_iso", "date_dmy", "card_suffix")
 INSTRUCTIONS = (
     "Translate only the supplied saved public/synthetic snapshot into the requested JSON schema. "
@@ -81,37 +91,47 @@ def placeholders(template):
         or not 2 <= len(found) <= 8
         or len(set(found)) != len(found)
         or re.search(r"[0-9<>@]", MARKER.sub("", template))
+        or not set(re.findall(r"[a-z]+", template.lower())) <= VOCABULARY
     ):
         raise ValueError(
-            "A format snapshot must be one placeholder structure: every value replaced by a "
-            "distinct <ROLE> marker, with no digits, addresses or raw message text."
+            "A format structure must be one line of distinct <ROLE> placeholders and common "
+            "notification words only. Names, digits, addresses and raw message text are refused."
         )
     return found
 
 
-def safe_snapshot(evidence, kind, content):
-    if not isinstance(evidence, SourceEvidence) or evidence.review.status == "rejected":
-        raise ValueError("Choose a current, unrejected public source evidence record")
+def format_snapshot(content):
+    if not isinstance(content, str):
+        raise ValueError("A format structure must be text")
+    placeholders(content)
+    return canonical({"version": 3, "kind": "format", "content": content})
+
+
+def terms_snapshot(issuer, final_url, retrieved_at, content):
+    """Only the official importer captures terms; users cannot supply this content."""
+    if issuer not in ISSUERS:
+        raise ValueError("Unknown official issuer")
+    official(issuer, final_url)
     if (
-        kind not in {"terms", "format"}
-        or not isinstance(content, str)
-        or not 0 < len(content) <= MAX_CONTENT
+        not isinstance(content, str)
+        or not 0 < len(content) <= MAX_TEXT
         or any(ord(char) < 32 and char != "\n" for char in content)
     ):
-        raise ValueError("Unsupported safe input. Choose terms or format and bounded plain text.")
-    # Provenance comes from the public ledger partition: the exact text must match
-    # the digest its public evidence record attests. A regex cannot establish that.
-    if evidence.content_sha256 != digest(content):
-        raise ValueError(
-            "Content must exactly match the content SHA-256 of its public evidence record. "
-            "Raw mail, private values and unbound pasted text are refused."
-        )
-    if kind == "format":
-        placeholders(content)
+        raise ValueError("Captured terms are empty, too large or not plain text")
+    content_sha256 = digest(content)
+    evidence = SourceEvidence(
+        revision_id="public-" + content_sha256[:32],
+        source_id=issuer + "-" + digest(final_url)[:16],
+        url=final_url,
+        source_kind="issuer",
+        retrieved_at=retrieved_at,
+        content_sha256=content_sha256,
+    )
     return canonical(
         {
-            "version": 2,
-            "kind": kind,
+            "version": 3,
+            "kind": "terms",
+            "issuer": issuer,
             "evidence": evidence.model_dump(mode="json"),
             "content": content,
         }
@@ -121,8 +141,14 @@ def safe_snapshot(evidence, kind, content):
 def checked_snapshot(text):
     try:
         value = parse_json(text)
-        evidence = SourceEvidence.model_validate(value["evidence"])
-        if text != safe_snapshot(evidence, value["kind"], value["content"]):
+        if value["kind"] == "terms":
+            evidence = value["evidence"]
+            rebuilt = terms_snapshot(
+                value["issuer"], evidence["url"], evidence["retrieved_at"], value["content"]
+            )
+        else:
+            rebuilt = format_snapshot(value["content"])
+        if text != rebuilt:
             raise ValueError()
     except (ValueError, TypeError, KeyError):
         raise ValueError(
@@ -132,7 +158,9 @@ def checked_snapshot(text):
 
 
 def family(value):
-    return value["kind"] + ":" + value["evidence"]["source_id"]
+    if value["kind"] == "terms":
+        return "terms:" + value["evidence"]["source_id"]
+    return "format:" + digest(value["content"])[:16]
 
 
 def outbound(snapshot):
@@ -164,7 +192,9 @@ def stated_amounts(text):
         currency = SYMBOLS.get(match[1], match[1])
         if currency in CURRENCY_EXPONENTS:
             try:
-                found.append(money(currency, match[2], match[3] or ""))
+                found.append(
+                    (match.start(), match.end(), money(currency, match[2], match[3] or ""))
+                )
             except ValueError:
                 continue
     return found
@@ -196,6 +226,9 @@ def parse_format(layout, text):
     if not match:
         raise ValueError("Message does not match this bounded layout")
     values = match.groupdict()
+    amount = money(values["currency"], values["amount"], values["fraction"] or "")
+    if amount.minor_units == 0:
+        raise ValueError("A zero amount is not a transaction proposal")
     when = None
     if values.get("date_iso"):
         when = date.fromisoformat(values["date_iso"])
@@ -231,9 +264,9 @@ def proposal(snapshot, raw, revision_id, parent=None):
     value = checked_snapshot(snapshot)
     if len(raw.encode()) > 16000:
         raise ValueError("Model output exceeds the supported bound")
-    evidence = SourceEvidence.model_validate(value["evidence"])
     content = value["content"]
     if value["kind"] == "terms":
+        evidence = SourceEvidence.model_validate(value["evidence"])
         parsed = TermsResult.model_validate(parse_json(raw))
         stated = (parsed.currency, parsed.minor_units, parsed.quote)
         if len({item is None for item in stated}) != 1:
@@ -241,8 +274,12 @@ def proposal(snapshot, raw, revision_id, parent=None):
         minimum = Fact()
         if parsed.quote is not None:
             start = content.find(parsed.quote)
+            end = start + len(parsed.quote)
             amount = Money(currency=parsed.currency, minor_units=parsed.minor_units)
-            if start < 0 or amount not in stated_amounts(parsed.quote):
+            if start < 0 or not any(
+                start <= first and last <= end and stated == amount
+                for first, last, stated in stated_amounts(content)
+            ):
                 raise ValueError("Threshold must be stated in an exact quote of the saved content")
             ref = EvidenceRef(
                 evidence_revision_id=evidence.revision_id,
@@ -298,7 +335,7 @@ def proposal(snapshot, raw, revision_id, parent=None):
         "kind": "format",
         "usable": layout is not None,
         "layout": layout,
-        "evidence": value["evidence"],
+        "evidence": None,
         "synthetic_test": example,
         "unknown": ["real bank compatibility", "transaction authenticity", "timezone"],
     }

@@ -34,6 +34,7 @@ from .gmail_auth import MESSAGES, GmailProblem, NativeStore, configure_google
 from .gmail_service import GmailService
 from .ledger import CORRECTION_FIELDS, Conflict, Ledger, heads, needs_review, uncertain
 from .monthly import SINGAPORE, calendar_month, format_money, grouping, monthly_report
+from .public_terms import ISSUERS
 
 MAX_BODY = 2 * 1024 * 1024
 DEFAULT_DB = Path.home() / ".local" / "share" / "spending-optimiser" / "ledger.sqlite3"
@@ -315,7 +316,7 @@ def create_app(
             "ai.html",
             ai=ai,
             messages=AI_MESSAGES,
-            sources=ai.sources(),
+            issuers=ISSUERS,
             snapshots=ai.snapshots(),
             selected=snapshot,
             preview=preview,
@@ -345,13 +346,17 @@ def create_app(
 
     @app.post("/ai/save")
     async def ai_save(request: Request):
-        form = await form_data(request, {"evidence", "kind", "content"})
-        identity = ai.save(
-            text_field(form, "evidence"),
-            text_field(form, "kind"),
-            text_field(form, "content").replace("\r\n", "\n"),
-        )
+        form = await form_data(request, {"content"})
+        identity = ai.save_format(text_field(form, "content"))
         return RedirectResponse("/ai?" + urlencode({"snapshot": identity}), 303)
+
+    @app.post("/ai/import")
+    async def ai_import(request: Request):
+        form = await form_data(request, {"issuer", "query"})
+        await run_in_threadpool(
+            ai.import_terms, text_field(form, "issuer"), text_field(form, "query")
+        )
+        return RedirectResponse("/ai", 303)
 
     @app.post("/ai/analyse")
     async def ai_analyse(request: Request):

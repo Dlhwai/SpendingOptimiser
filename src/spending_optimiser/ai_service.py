@@ -11,21 +11,24 @@ from .ai_inputs import (
     checked_snapshot,
     digest,
     family,
+    format_snapshot,
     outbound,
     parse_format,
     proposal,
     result_schema,
-    safe_snapshot,
+    terms_snapshot,
 )
 from .codex_client import VERSION, AIProblem, CodexClient
 from .common import EvidenceRef, Fact, Money, Review
 from .ledger import Conflict, canonical, parse_json
+from .public_terms import ISSUERS, discover, https_get
 from .transactions import EventOrigin, Transaction
 
 
 class AIService:
-    def __init__(self, ledger, *, binary=None, client_factory=CodexClient):
+    def __init__(self, ledger, *, binary=None, client_factory=CodexClient, transport=https_get):
         self.ledger, self.binary, self.client_factory = ledger, binary, client_factory
+        self.transport, self.import_result = transport, None
         namespace = hashlib.sha256(str(ledger.path).encode()).hexdigest()[:24]
         self.home = ledger.path.parent / (".spending-codex-" + namespace)
         self.client = self.connection = self.authorization_url = self.problem = None
@@ -104,25 +107,7 @@ class AIService:
             self.close()
             raise AIProblem("account_changed")
 
-    def sources(self):
-        """Current public evidence revisions that attest exact content by digest."""
-        evidence = self.ledger.load().evidence
-        superseded = {item.supersedes for item in evidence}
-        return {
-            item.revision_id: item
-            for item in evidence
-            if item.revision_id not in superseded
-            and item.review.status != "rejected"
-            and item.content_sha256 is not None
-        }
-
-    def save(self, revision_id, kind, content):
-        source = self.sources().get(revision_id)
-        if source is None:
-            raise ValueError(
-                "Choose a current public evidence record with a content SHA-256 from the ledger"
-            )
-        body = safe_snapshot(source, kind, content)
+    def _insert(self, body):
         identity = digest(body)
         with self.ledger.connection() as db:
             db.execute(
@@ -131,14 +116,34 @@ class AIService:
             )
         return identity
 
+    def import_terms(self, issuer, query):
+        """Explicit request only: bounded official retrieval, then app-owned capture."""
+        found, problems, complete = discover(issuer, query, self.transport)
+        saved = [
+            self._insert(terms_snapshot(issuer, item.final_url, datetime.now(UTC), item.text))
+            for item in found
+        ]
+        self.import_result = {
+            "issuer": ISSUERS[issuer]["name"],
+            "saved": len(saved),
+            "problems": problems[:10],
+            "complete": complete,
+        }
+        return saved
+
+    def save_format(self, content):
+        return self._insert(format_snapshot(content))
+
+    LISTING = (
+        "SELECT s.id, s.body, s.rowid = (SELECT MAX(t.rowid) FROM ai_snapshots t "
+        "WHERE t.family = s.family) FROM ai_snapshots s "
+    )
+
     def snapshots(self):
         with self.ledger.connection() as db:
-            rows = db.execute(
-                "SELECT id, body FROM ai_snapshots ORDER BY rowid DESC LIMIT 50"
-            ).fetchall()
-        current = self.sources()
+            rows = db.execute(self.LISTING + "ORDER BY s.rowid DESC LIMIT 50").fetchall()
         items = []
-        for identity, body in rows:
+        for identity, body, latest in rows:
             try:
                 if digest(body) != identity:
                     raise ValueError()
@@ -146,29 +151,30 @@ class AIService:
             except ValueError:
                 items.append({"id": identity, "status": "unsupported"})
                 continue
-            evidence = value["evidence"]
             items.append(
                 {
                     "id": identity,
                     "kind": value["kind"],
-                    "source_id": evidence["source_id"],
-                    "document_version": evidence["document_version"],
-                    "status": "current" if evidence["revision_id"] in current else "stale",
+                    "label": (
+                        value["evidence"]["url"] if value["kind"] == "terms" else value["content"]
+                    ),
+                    "status": "current" if latest else "stale",
                 }
             )
         return items
 
     def snapshot(self, identity):
         with self.ledger.connection() as db:
-            row = db.execute("SELECT body FROM ai_snapshots WHERE id = ?", (identity,)).fetchone()
-        if row is None or digest(row[0]) != identity:
+            row = db.execute(self.LISTING + "WHERE s.id = ?", (identity,)).fetchone()
+        if row is None or digest(row[1]) != identity:
             raise ValueError("Saved safe snapshot is missing or changed")
-        if checked_snapshot(row[0])["evidence"]["revision_id"] not in self.sources():
+        checked_snapshot(row[1])
+        if not row[2]:
             raise ValueError(
-                "This snapshot's public evidence was superseded, rejected or removed. "
-                "Save the current revision before preview or analysis."
+                "A newer official capture of this document exists. "
+                "Use the current capture for preview or analysis."
             )
-        return row[0]
+        return row[1]
 
     def preview(self, identity):
         return outbound(self.snapshot(identity))

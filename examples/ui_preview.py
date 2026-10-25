@@ -2,7 +2,6 @@
 
 import argparse
 import base64
-import hashlib
 import json
 import secrets
 import tempfile
@@ -27,35 +26,36 @@ PUBLIC_QUOTE = (
     "and spend at 4 different participating merchants such as SimplyGo, Cold Storage, "
     "foodpanda and Guardian."
 )
-PUBLIC_SOURCES = {
-    "dbs-yuu-fragment-2026-10-24": {
-        "source_id": "dbs-yuu-public-page",
-        "url": "https://www.dbs.com.sg/personal/cards/credit-cards/dbs-yuu-cards",
-        "source_kind": "issuer",
-        "retrieved_at": "2026-10-24T16:15:00+08:00",
-        "document_version": "Public page fragment only; not full card terms",
-        "kind": "terms",
-        "content": PUBLIC_QUOTE,
-    },
-    "synthetic-purchase-first-v1": {
-        "source_id": "synthetic-purchase-first",
-        "url": "https://example.invalid/synthetic-purchase-first",
-        "source_kind": "synthetic",
-        "retrieved_at": "2025-01-02T11:00:00+08:00",
-        "document_version": "synthetic-1",
-        "kind": "format",
-        "content": "Purchase <CURRENCY> <AMOUNT> at <MERCHANT> on <DATE_ISO>. Card <CARD_SUFFIX>.",
-    },
-    "synthetic-card-first-v1": {
-        "source_id": "synthetic-card-first",
-        "url": "https://example.invalid/synthetic-card-first",
-        "source_kind": "synthetic",
-        "retrieved_at": "2025-01-02T11:00:00+08:00",
-        "document_version": "synthetic-1",
-        "kind": "format",
-        "content": "Card <CARD_SUFFIX>: <CURRENCY> <AMOUNT> at <MERCHANT>; date <DATE_DMY>.",
-    },
+PREVIEW_PAGES = {
+    "https://www.dbs.com.sg/personal/cards/credit-cards/dbs-yuu-cards": (
+        "<html><body><h1>SYNTHETIC PREVIEW COPY</h1><p>DBS yuu Card</p>"
+        '<a href="/personal/cards/credit-cards/dbs-yuu-terms">yuu card terms and conditions</a>'
+        "</body></html>"
+    ),
+    "https://www.dbs.com.sg/personal/cards/credit-cards/dbs-yuu-terms": (
+        "<html><body><h1>Synthetic preview of yuu terms and conditions</h1>"
+        f"<p>{PUBLIC_QUOTE}</p><script>ignored()</script></body></html>"
+    ),
 }
+
+
+class PreviewPublicTransport:
+    """Fake official-site transport. Serves synthetic pages; never opens a socket."""
+
+    def __init__(self, pages=None):
+        self.pages = dict(PREVIEW_PAGES if pages is None else pages)
+        self.requests = []
+
+    def __call__(self, url):
+        self.requests.append(url)
+        page = self.pages.get(url)
+        if page is None:
+            return 404, {"content-type": "text/html"}, b""
+        if isinstance(page, tuple):
+            return page
+        return 200, {"content-type": "text/html; charset=utf-8"}, page.encode()
+
+
 PREVIEW_ROLES = (
     ("currency", "currency"),
     ("amount", "amount"),
@@ -64,23 +64,6 @@ PREVIEW_ROLES = (
     ("date", "date_iso"),
     ("card", "card_suffix"),
 )
-
-
-def public_document(sources):
-    """Public source-evidence records whose digests attest the exact saved content."""
-    evidence = [
-        {
-            "revision_id": revision,
-            **{k: v for k, v in item.items() if k not in {"kind", "content"}},
-            "content_sha256": hashlib.sha256(item["content"].encode()).hexdigest(),
-        }
-        for revision, item in sources.items()
-    ]
-    return json.dumps({"evidence": evidence})
-
-
-def import_public_sources(ledger, sources=PUBLIC_SOURCES):
-    return ledger.import_document(public_document(sources))
 
 
 class PreviewAIClient:
@@ -109,12 +92,19 @@ class PreviewAIClient:
         content = snapshot["content"]
         if snapshot["kind"] == "terms":
             amounts = stated_amounts(content)[:1]
+            if not amounts:
+                return json.dumps(
+                    {"kind": "terms", "currency": None, "minor_units": None, "quote": None}
+                )
+            start, end, amount = amounts[0]
+            line_start = content.rfind("\n", 0, start) + 1
+            line_end = content.find("\n", end)
             return json.dumps(
                 {
                     "kind": "terms",
-                    "currency": amounts[0].currency if amounts else None,
-                    "minor_units": amounts[0].minor_units if amounts else None,
-                    "quote": content if amounts else None,
+                    "currency": amount.currency,
+                    "minor_units": amount.minor_units,
+                    "quote": content[line_start : None if line_end < 0 else line_end],
                 }
             )
         markers = [
@@ -240,7 +230,12 @@ def preview_app(directory, *, configured=True, populated=False):
         oauth=PreviewOAuth(),
         client_factory=lambda tokens: GmailRestClient(tokens, PreviewTransport()),
     )
-    ai = AIService(Ledger(path), binary="synthetic-client-only", client_factory=PreviewAIClient)
+    ai = AIService(
+        Ledger(path),
+        binary="synthetic-client-only",
+        client_factory=PreviewAIClient,
+        transport=PreviewPublicTransport(),
+    )
     app = create_app(path, gmail_service=service, ai_service=ai)
     app.state.synthetic_preview = True
     if populated:
@@ -280,7 +275,6 @@ def main():
         parser.error("Use a separate loopback port from 1024-65535, never 8765")
     with tempfile.TemporaryDirectory(prefix="spending-ui-preview-") as directory:
         app = preview_app(directory, configured=not args.unconfigured, populated=args.populated)
-        import_public_sources(app.state.ledger)
         print(f"Synthetic preview: http://127.0.0.1:{args.port}; disposable database: {directory}")
         uvicorn.run(app, host="127.0.0.1", port=args.port, access_log=False, proxy_headers=False)
 

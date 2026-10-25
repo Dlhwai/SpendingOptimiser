@@ -2,7 +2,7 @@
 
 A planned personal spending tracker for maximizing credit-card rewards while keeping monthly cash flow and budgets visible.
 
-**Status: deterministic desktop monthly views, account-scoped saved Gmail candidates, and the local import/review ledger are implemented. Monthly loading is explicit, bounded and resumable. All page views read saved data only. OAuth/retrieval are synthetic-tested; live Gmail still needs your setup and consent. An optional, restricted subscription-backed Codex workflow now analyses only saved snapshots bound by digest to public source-evidence records. Live AI accounts and qualified bank-email extraction have not been verified.**
+**Status: deterministic desktop monthly views, account-scoped saved Gmail candidates, and the local import/review ledger are implemented. Monthly loading is explicit, bounded and resumable. All page views read saved data only. OAuth/retrieval are synthetic-tested; live Gmail still needs your setup and consent. An optional, restricted subscription-backed Codex workflow now analyses only saved official issuer terms captured by the app on request, or allowlisted placeholder structures. Live AI accounts and qualified bank-email extraction have not been verified.**
 
 Start with the [monthly workflow, inclusion rules and safe preview](docs/monthly.md).
 
@@ -120,7 +120,7 @@ projections use saved canonical ledger facts independently of ingestion and AI.
 
 ## Privacy
 
-Commit only source code, documentation, and sanitized fixtures. Keep actual financial emails, account details, OAuth credentials, databases, and local review/session state out of Git. Private transaction content is never eligible for external models. Only saved public terms or placeholder structures attested by public source-evidence digests may be sent, with explicit per-analysis action; confirmation alone cannot authorize excluded private data.
+Commit only source code, documentation, and sanitized fixtures. Keep actual financial emails, account details, OAuth credentials, databases, and local review/session state out of Git. Private transaction content is never eligible for external models. Only app-captured official public terms or allowlisted placeholder structures may be sent, with explicit per-analysis action; confirmation alone cannot authorize excluded private data.
 
 ## Next step
 
