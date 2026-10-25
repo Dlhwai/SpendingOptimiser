@@ -156,8 +156,9 @@ Rendered imports are escaped. All state changes are POST forms with a server
 nonce plus HttpOnly, SameSite=Strict cookie; cross-origin mutations and untrusted
 Host names are rejected. Forms expire on restart. Responses disable caching and
 external scripts/resources; source URLs are displayed as text, not fetched.
-Uploaded bodies are bounded to 2 MiB. There is no model integration or transaction
-telemetry. Tests and smoke validation use only synthetic material.
+Uploaded bodies are bounded to 2 MiB. This ledger workflow makes no model calls or
+transaction telemetry. The separate [safe-reference AI workflow](subscription-ai.md)
+never receives imported private data. Tests and smoke validation use synthetic material.
 
 There is no multi-user login, encryption at rest, retention/deletion UI, migrations beyond
 local database format 1, automatic backups, ledger-table pagination, or production hosting

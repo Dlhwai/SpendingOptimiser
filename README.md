@@ -2,7 +2,7 @@
 
 A planned personal spending tracker for maximizing credit-card rewards while keeping monthly cash flow and budgets visible.
 
-**Status: deterministic desktop monthly views, account-scoped saved Gmail candidates, and the local import/review ledger are implemented. Monthly loading is explicit, bounded and resumable. All page views read saved data only. OAuth/retrieval are synthetic-tested; live Gmail still needs your setup and consent. No live AI provider or qualified bank-email extraction is integrated.**
+**Status: deterministic desktop monthly views, account-scoped saved Gmail candidates, and the local import/review ledger are implemented. Monthly loading is explicit, bounded and resumable. All page views read saved data only. OAuth/retrieval are synthetic-tested; live Gmail still needs your setup and consent. An optional, restricted subscription-backed Codex workflow now analyses only saved catalog-vetted public/synthetic references. Live AI accounts and qualified bank-email extraction have not been verified.**
 
 Start with the [monthly workflow, inclusion rules and safe preview](docs/monthly.md).
 
@@ -22,7 +22,7 @@ Start with the [monthly workflow, inclusion rules and safe preview](docs/monthly
 
 ## Implemented milestone
 
-An importable `spending_optimiser` package provides typed Pydantic models for transaction revisions, account/card identities, uncertain card rules, source evidence, and self-contained JSON snapshots. It includes synthetic fixtures, round-trip and validation tests, a pinned uv setup, and CI. A local FastAPI browser service now imports these validated snapshots transactionally into SQLite, displays a persisted event ledger, and preserves auditable review/correction revisions. It does not calculate rewards, extract financial facts from emails, or reconcile bank statements. A separate [constrained extraction use case](docs/extraction.md) accepts notification data and an injected model callable, validates bounded evidence spans, and returns pending-review proposals using synthetic fixtures. No provider client or qualified real-bank parser is implemented. A separate read-only Gmail adapter lists and retrieves private notification candidates, with pagination, MIME normalization, stable observation identities, and redacted errors. It creates no accepted transactions. The three card names remain unresolved; no real terms have been researched.
+An importable `spending_optimiser` package provides typed Pydantic models for transaction revisions, account/card identities, uncertain card rules, source evidence, and self-contained JSON snapshots. It includes synthetic fixtures, round-trip and validation tests, a pinned uv setup, and CI. A local FastAPI browser service now imports these validated snapshots transactionally into SQLite, displays a persisted event ledger, and preserves auditable review/correction revisions. It does not calculate rewards, extract financial facts from emails, or reconcile bank statements. A separate [constrained extraction use case](docs/extraction.md) accepts notification data and an injected model callable, validates bounded evidence spans, and returns pending-review proposals using synthetic fixtures. That extractor has no provider client or qualified real-bank parser; the separate safe-reference AI workflow never receives mail. A separate read-only Gmail adapter lists and retrieves private notification candidates, with pagination, MIME normalization, stable observation identities, and redacted errors. It creates no accepted transactions. The three exact card variants remain unresolved. The AI catalog includes one vetted public DBS yuu bonus-spend fragment, not complete or qualified card terms.
 
 See [schema usage and limits](docs/schemas.md). Quick start (Python 3.11.9, uv 0.11.8):
 
@@ -82,6 +82,18 @@ The seeded ledger is **not AI-extracted mail**. Every dependency is fake; no nat
 credentials, real mail, default ledger or external model is touched. Ctrl-C removes
 the disposable database. [Exact fixture counts and limits](docs/monthly.md).
 
+## Subscription-backed safe AI
+
+Choose **Safe AI analysis** to connect an eligible ChatGPT session through a pinned,
+restricted official Codex client, save a vetted public terms fragment or synthetic
+placeholder structure, inspect the exact safe input, explicitly request analysis,
+and review a versioned proposal. Acceptance saves a reference only, not ledger
+facts or an automatically installed parser. Default app use remains disconnected.
+Claude and Gemini are honestly unavailable; no API-key billing fallback is used.
+See [supported client setup, provider evidence, privacy boundary and limits](docs/subscription-ai.md).
+
+## Safe synthetic UI preview
+
 For the separate first-run Google-setup/offline-review walkthrough:
 
 ```sh
@@ -90,8 +102,8 @@ uv run --locked python examples/ui_preview.py --port 8876
 
 Open **http://127.0.0.1:8876**. This runs the actual UI against a fresh disposable
 database, in-memory fake credential store, local synthetic consent page and fake
-Gmail transport. It never reads your normal ledger or OS credentials and makes no
-Google requests. Every screen is labeled synthetic. Use `--unconfigured` to inspect
+Gmail transport, fake AI subscription and fake model. It never reads your normal
+ledger or OS credentials and makes no Google or model-provider requests. Every screen is labeled synthetic. Use `--unconfigured` to inspect
 the setup-required state or `--populated` for the bundled ledger example. Connect,
 approve synthetic consent, choose February 2025, then Load month for four fictional
 candidates, including long text. Ctrl-C removes the temporary database. Port 8765 is explicitly refused.
@@ -100,15 +112,15 @@ candidates, including long text. Ctrl-C removes the temporary database. Port 876
 
 One Python service uses FastAPI, SQLite, and server-rendered Jinja2 forms, without
 JavaScript dependencies or a frontend build. The bounded extraction use case and
-read-only Gmail adapter remain separate modules; only Gmail authorization and
-candidate retrieval are wired into the service. Mail is not sent to the extractor. Deterministic monthly projections use saved canonical ledger facts independently
-of ingestion and AI. Provider integration is deferred pending a decision about
-whether selected saved content may leave the machine or processing must be local.
+read-only Gmail adapter remain separate modules; Gmail authorization,
+candidate retrieval and a separate safe-snapshot AI reference workflow are wired
+into the service. Mail is never sent to either AI path. Deterministic monthly
+projections use saved canonical ledger facts independently of ingestion and AI.
 
 ## Privacy
 
-Commit only source code, documentation, and sanitized fixtures. Keep actual financial emails, account details, OAuth credentials, databases, and local review/session state out of Git. Sending transaction content to external models requires explicit opt-in.
+Commit only source code, documentation, and sanitized fixtures. Keep actual financial emails, account details, OAuth credentials, databases, and local review/session state out of Git. Private transaction content is never eligible for external models. Only saved, catalog-vetted public terms or synthetic placeholder structures may be sent, with explicit per-analysis action; confirmation alone cannot authorize excluded private data.
 
 ## Next step
 
-The local schema-document ingestion/review path with persistence is implemented and tested. Next, qualify a real notification ingestion adapter against sanitized source examples. AI/provider integration, adaptive extraction, signed financial reconciliation, rewards and exact card-term research remain separate milestones. The current desktop monthly workflow deliberately does not guess those meanings.
+The local schema-document ingestion/review path with persistence is implemented and tested. Next, qualify a real notification ingestion adapter against sanitized source examples. Account-backed AI verification, real-bank format qualification, adaptive extraction, signed financial reconciliation, rewards and complete card-term research remain separate milestones. The current desktop monthly workflow deliberately does not guess those meanings.

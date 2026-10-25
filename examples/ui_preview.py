@@ -13,10 +13,49 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse
 from google.oauth2.credentials import Credentials
 
+from spending_optimiser.ai_inputs import PUBLIC_QUOTE
+from spending_optimiser.ai_service import AIService
 from spending_optimiser.gmail import GmailRestClient
 from spending_optimiser.gmail_auth import GmailProblem, GoogleConnection, configure_google
 from spending_optimiser.gmail_service import GmailService
+from spending_optimiser.ledger import Ledger
 from spending_optimiser.web import create_app
+
+
+class PreviewAIClient:
+    """Fake cached subscription and model transport. No native client or model calls."""
+
+    def __init__(self, binary, home):
+        self.account_value = {"email": "ai.preview@example.invalid", "plan": "plus"}
+        self.inputs = []
+        self.output = None
+        self.started = self.closed = False
+
+    def start(self):
+        self.started = True
+
+    def account(self):
+        return self.account_value
+
+    def login(self):
+        return "/preview-ai-consent"
+
+    def analyse(self, text, schema):
+        self.inputs.append(text)
+        if self.output is not None:
+            return self.output
+        snapshot = json.loads(text)["saved_snapshot"]
+        return json.dumps(
+            {"kind": "terms", "minor_units": 80000, "quote": PUBLIC_QUOTE}
+            if snapshot["kind"] == "terms"
+            else {"kind": "format", "layout": snapshot["key"], "quote": snapshot["content"]}
+        )
+
+    def logout(self):
+        self.account_value = None
+
+    def close(self):
+        self.closed = True
 
 
 class MemoryStore:
@@ -124,7 +163,8 @@ def preview_app(directory, *, configured=True, populated=False):
         oauth=PreviewOAuth(),
         client_factory=lambda tokens: GmailRestClient(tokens, PreviewTransport()),
     )
-    app = create_app(path, gmail_service=service)
+    ai = AIService(Ledger(path), binary="synthetic-client-only", client_factory=PreviewAIClient)
+    app = create_app(path, gmail_service=service, ai_service=ai)
     app.state.synthetic_preview = True
     if populated:
         from importlib.resources import files
