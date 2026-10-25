@@ -357,7 +357,7 @@ def test_browser_import_review_restart_and_public_privacy(tmp_path, payload):
     )
     restarted = client_for(path)
     new_data = csrf(restarted)
-    assert "test-purchase" in restarted.get("/").text
+    assert "test-purchase" in restarted.get("/?month=2025-01").text
     assert "Synthetic cafe" in restarted.get("/transaction?event_id=test-purchase").text
     response = restarted.post("/import", data={**new_data, "document": json.dumps(payload)})
     assert "0 new records" in response.text

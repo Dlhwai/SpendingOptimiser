@@ -211,7 +211,11 @@ class CandidatePage:
     results: tuple[MessageResult, ...] = field(default=(), repr=False)
     next_page_token: str | None = field(default=None, repr=False)
     error: IngestionError | None = None
-    duplicate_count: int = 0
+    duplicate_ids: tuple[str, ...] = field(default=(), repr=False)
+
+    @property
+    def duplicate_count(self) -> int:
+        return len(self.duplicate_ids)
 
     @property
     def successful(self) -> bool:
@@ -380,12 +384,12 @@ class GmailAdapter:
             return CandidatePage(error=IngestionError("invalid_response"))
         seen = set(seen_ids)
         results = []
-        duplicates = 0
+        duplicates = []
         for item in messages:
             message_id = item["id"]
             if message_id in seen:
-                duplicates += 1
+                duplicates.append(message_id)
                 continue
             seen.add(message_id)
             results.append(self.get_candidate(message_id))
-        return CandidatePage(tuple(results), token, duplicate_count=duplicates)
+        return CandidatePage(tuple(results), token, duplicate_ids=tuple(duplicates))

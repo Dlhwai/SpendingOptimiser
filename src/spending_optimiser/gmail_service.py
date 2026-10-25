@@ -1,12 +1,18 @@
-"""One local account, bounded in-memory candidates, no financial extraction/acceptance."""
+"""One local account, explicit bounded month scans and saved mail. No extraction/AI."""
 
 import hashlib
 import secrets
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from .gmail import AuthenticationFailure, GmailAdapter, GmailRestClient
 from .gmail_auth import GmailProblem, GoogleOAuth, NativeStore, client_config
+from .mail_cache import MailCache, fresh_state
+from .monthly import SINGAPORE, calendar_month
+
+# Proven per-message failures: retained for targeted retry without blocking later pages.
+PERSISTENT = {"invalid_message", "response_too_large"}
 
 
 @dataclass(repr=False)
@@ -25,12 +31,11 @@ class GmailService:
         self.client_factory = client_factory if client_factory is not None else GmailRestClient
         self.clock = clock if clock is not None else time.monotonic
         self.key = "connection-" + hashlib.sha256(str(database).encode()).hexdigest()
+        self.cache = MailCache(database)
         self.pending = {}
         self.connection = None
         self.connection_id = secrets.token_urlsafe(24)
-        self.candidates = {}
-        self.load_days = 7
-        self.load_limit = 20
+        self.notice_month = None
         self.notice = (
             "Disconnected. Connect Gmail or restore your saved connection; "
             "mail loads only on request."
@@ -45,9 +50,9 @@ class GmailService:
 
     def clear(self):
         self.connection = None
-        self.candidates = {}
         self.connection_id = secrets.token_urlsafe(24)
-        self.notice = "Disconnected. Temporary mail cleared; no mail loads automatically."
+        self.notice_month = None
+        self.notice = "Disconnected. Mail hidden; saved mail remains on this device."
 
     def begin(self, session, redirect):
         config = self.config()
@@ -86,7 +91,7 @@ class GmailService:
         self.pending.clear()  # another tab cannot replace the newly selected account
         self.connection = connection
         self.problem = None
-        self.notice = "Connected. No mail fetched. Choose a recent range and Load mail."
+        self.notice = "Connected. No mail fetched. Choose a calendar month and Load month."
 
     def restore(self):
         config = self.config()
@@ -122,78 +127,117 @@ class GmailService:
             self.clear()
             raise AuthenticationFailure() from None
 
-    def load(self, days, limit, connection_id):
+    @property
+    def namespace(self):
+        if self.connection is None:
+            return None
+        return "google-" + hashlib.sha256(self.connection.subject.encode()).hexdigest()
+
+    def saved_month(self, month):
+        namespace = self.namespace
+        if namespace is None:
+            return {}, None
+        return self.cache.candidates(namespace, month), self.cache.state(namespace, month)
+
+    def load_month(self, key, pages, connection_id, action):
+        month = calendar_month(key)
         if self.connection is None or not secrets.compare_digest(
             connection_id.encode(), self.connection_id.encode()
         ):
             raise GmailProblem("reconnect")
         if (
-            type(days) is not int
-            or days not in {1, 7, 30}
-            or type(limit) is not int
-            or not 1 <= limit <= 100
+            type(pages) is not int
+            or not 1 <= pages <= 5
+            or action not in {"continue", "refresh", "retry"}
         ):
-            raise ValueError("Choose 1, 7 or 30 recent days and a message limit from 1 to 100")
-        self.load_days, self.load_limit = days, limit
-        connection = self.connection
-        namespace = "google-" + hashlib.sha256(connection.subject.encode()).hexdigest()
+            raise ValueError("Choose 1-5 pages and Continue, Retry failed messages or Refresh")
+        connection, namespace = self.connection, self.namespace
+        state = fresh_state() if action == "refresh" else self.cache.state(namespace, month)
+        self.notice_month = month.key
+        if action == "continue" and state["exhausted"]:
+            self.notice = "Month query already exhausted. Refresh month to check for new mail."
+            return
         adapter = GmailAdapter(self.client_factory(self), namespace)
-        seen, tokens, found, errors = set(), set(), {}, []
-        token = None
-        duplicates = examined = 0
-        complete = False
         self.problem = None
-        for _ in range(5):
-            page = adapter.fetch_page(
-                query=f"newer_than:{days}d",
-                page_token=token,
-                page_size=min(20, limit - examined),
-                seen_ids=seen,
-            )
-            duplicates += page.duplicate_count
-            examined += len(page.results) + page.duplicate_count
-            if page.error:
-                errors.append(page.error.code)
-            for result in page.results:
+        if action == "retry":
+            # Targeted retry of retained per-message failures; listing state is unchanged.
+            found, errors = [], []
+            for message_id in list(state["failed"])[: pages * 20]:
+                result = adapter.get_candidate(message_id)
                 if result.candidate is not None:
-                    found[result.message_id] = result.candidate
-                    seen.add(result.message_id)
+                    found.append(result.candidate)
+                    state["seen"].append(message_id)
+                    del state["failed"][message_id]
                 else:
+                    state["failed"][message_id] = result.error.code
                     errors.append(result.error.code)
-            if not page.successful:
-                break  # no checkpoint of failed IDs; Refresh starts a fresh bounded scan
-            if page.next_page_token is None:
-                complete = True
-                break
-            if page.next_page_token in tokens:
-                errors.append("invalid_response")
-                break
-            tokens.add(page.next_page_token)
-            token = page.next_page_token
-            if examined >= limit:
-                break
-        if connection is not self.connection:
-            # A refresh/store failure cleared authorization; never restore stale cached mail.
-            raise GmailProblem(self.problem or "reconnect")
-        if any(code in {"authentication_failed", "refresh_failed"} for code in errors):
-            self.clear()
-            raise GmailProblem("reconnect")
-        refreshed = len(set(found) & set(self.candidates))
-        self.candidates = found  # bounded latest batch, never an accumulating mailbox backfill
-        self.notice = (
-            f"{len(found)} candidates loaded; {refreshed} refreshed; "
-            f"{duplicates} duplicate IDs skipped. "
-            f"Range: last {days} days; limit: {limit} messages / 5 pages. "
-        )
-        if errors:
-            self.notice += (
-                "Partial/failed load: "
-                + ", ".join(sorted(set(errors)))
-                + ". Refresh mail to retry."
-            )
-        elif complete:
-            self.notice += (
-                "Query exhausted (0 results means no matching candidates, not no transactions)."
-            )
+            self.verify(connection, errors)
+            state["checked_at"] = datetime.now(SINGAPORE).isoformat(timespec="seconds")
+            self.cache.save(namespace, month, state, found)
         else:
-            self.notice += "Loading limit reached; more mail may match. Narrow the range if needed."
+            for _ in range(pages):
+                page = adapter.fetch_page(
+                    query=month.query,
+                    page_token=state["token"],
+                    page_size=20,
+                    seen_ids=[*state["seen"], *state["failed"]],
+                )
+                state["started"] = True
+                state["checked_at"] = datetime.now(SINGAPORE).isoformat(timespec="seconds")
+                retried = set(state["retry"])
+                errors = [page.error.code] if page.error else []
+                found = []
+                for result in page.results:
+                    if result.candidate is not None:
+                        found.append(result.candidate)
+                        state["seen"].append(result.message_id)
+                    elif result.error.code in PERSISTENT:
+                        state["failed"][result.message_id] = result.error.code
+                    else:
+                        errors.append(result.error.code)
+                        continue
+                    state["retry"].append(result.message_id)
+                self.verify(connection, errors)
+                state["errors"] = sorted(set(errors))
+                if not errors:
+                    token = page.next_page_token
+                    if token is not None and token in state["tokens"]:
+                        state["errors"] = ["pagination_cycle; refresh month to restart"]
+                    else:
+                        if token is not None:
+                            state["tokens"].append(token)
+                        state["token"] = token
+                        state["exhausted"] = token is None
+                        # Count each page once; IDs saved by earlier attempts are not duplicates.
+                        state["pages"] += 1
+                        state["duplicates"] += page.duplicate_count - len(
+                            retried & set(page.duplicate_ids)
+                        )
+                        state["retry"] = []
+                # Persist successes plus the unadvanced checkpoint on a failed page.
+                # Explicit Continue retries that page, skipping resolved IDs.
+                self.cache.save(namespace, month, state, found)
+                if state["errors"] or state["exhausted"]:
+                    break
+        count = len(self.cache.candidates(namespace, month))
+        failed = len(state["failed"])
+        self.notice = (
+            f"{count} saved candidates for {month.label}; {state['pages']} pages completed; "
+            f"{state['duplicates']} duplicate IDs skipped; {failed} unresolved messages. "
+            + (
+                "Query exhausted, but unresolved messages are not saved. "
+                "Retry failed messages; coverage is incomplete."
+                if state["exhausted"] and failed
+                else "Query exhausted, not proof of complete financial coverage."
+                if state["exhausted"]
+                else "Incomplete month. Continue loading or retry; totals are saved ledger only."
+            )
+        )
+
+    def verify(self, connection, errors):
+        if connection is not self.connection or any(
+            code in {"authentication_failed", "refresh_failed"} for code in errors
+        ):
+            self.clear()
+            # A refresh/store failure cleared authorization; keep its specific problem.
+            raise GmailProblem(self.problem or "reconnect")

@@ -14,7 +14,7 @@
 <p class="nav-label">YOUR WORKSPACE</p>
 <nav aria-label="Main navigation">
 {% for path, label, icon in [('/', 'Overview', '01'), ('/gmail', 'Mail inbox', '02'), ('/ledger', 'Transactions', '03'), ('/review', 'Review queue', '04')] %}
-<a href="{{ path }}" {% if request.url.path == path or (path == '/gmail' and request.url.path.startswith('/gmail/')) or (path == '/ledger' and request.url.path == '/transaction') %}aria-current="page"{% endif %}><span class="nav-icon" aria-hidden="true">{{ icon }}</span>{{ label }}</a>
+<a href="{{ path }}{% if path in ['/', '/gmail', '/ledger'] and month is defined and month and request.query_params.get('month') %}?month={{ month.key }}{% endif %}" {% if request.url.path == path or (path == '/gmail' and request.url.path.startswith('/gmail/')) or (path == '/ledger' and request.url.path == '/transaction') %}aria-current="page"{% endif %}><span class="nav-icon" aria-hidden="true">{{ icon }}</span>{{ label }}</a>
 {% endfor %}
 </nav>
 <p class="nav-label secondary-label">MANAGE DATA</p>
