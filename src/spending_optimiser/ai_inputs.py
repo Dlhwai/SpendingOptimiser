@@ -86,16 +86,16 @@ def digest(text):
 def placeholders(template):
     found = MARKER.findall(template)
     if (
-        "\n" in template
-        or len(template) > MAX_TEMPLATE
+        len(template) > MAX_TEMPLATE
         or not 2 <= len(found) <= 8
         or len(set(found)) != len(found)
-        or re.search(r"[0-9<>@]", MARKER.sub("", template))
+        or not re.fullmatch(r"""[A-Za-z .,;:!?()'"/&_-]*""", MARKER.sub("", template))
         or not set(re.findall(r"[a-z]+", template.lower())) <= VOCABULARY
     ):
         raise ValueError(
             "A format structure must be one line of distinct <ROLE> placeholders and common "
-            "notification words only. Names, digits, addresses and raw message text are refused."
+            "ASCII notification words and punctuation only. "
+            "Names, digits, addresses and raw message text are refused."
         )
     return found
 

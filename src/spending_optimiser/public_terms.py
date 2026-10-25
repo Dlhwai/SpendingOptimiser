@@ -140,6 +140,8 @@ def read_body(response, budget):
         budget.remaining()
         chunk = response.read1(65536)
         if not chunk:
+            if response.length not in {None, 0}:
+                raise FetchProblem("Official document body is incomplete")
             return b"".join(chunks)
         size += len(chunk)
         if size > MAX_BYTES:
@@ -249,7 +251,11 @@ def retrieve(issuer, url, transport, budget):
             text = clean(decoded.splitlines())
             return Document(issuer, url, kind, text, (), text)
         page = _Page()
-        page.feed(decoded)
+        try:
+            page.feed(decoded)
+            page.close()
+        except (ValueError, AssertionError):
+            raise FetchProblem("Official document HTML is malformed") from None
         links = []
         for href, label in page.links:
             try:

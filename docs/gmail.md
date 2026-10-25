@@ -246,8 +246,10 @@ uv run --locked spending-optimiser
    view the complete subject, unverified headers and escaped
    normalized text. HTML is never executed, images never loaded, URLs never
    followed and embedded instructions never acted upon. Display is capped at
-   10,000 characters per candidate with a size notice. Candidates are not parsed
-   or added to the ledger and do not change review decisions or financial facts.
+   10,000 characters per candidate with a size notice. Accepted format layouts
+   match saved candidates locally and deterministically into unsaved, review-pending
+   Mail proposals. No model is called, nothing is added to the ledger and review
+   decisions and financial facts remain unchanged.
 6. **Refresh month** restarts this month's query with bounded pages, retaining
    saved candidates and deduplicating by stable account/message identity. Changed
    content versions are preserved. Continue until exhausted again; previous
@@ -297,7 +299,9 @@ This remains a single-user, loopback-only local app. The OS user/other local
 software are trusted; memory, browser history, OS-store access and backups still
 need normal OS protection. Do not expose the app on a LAN, through a proxy/tunnel,
 or enable third-party HTTP/debug logging. No private mail is sent to an external
-model, and there is no live AI integration.
+model. The optional [safe-reference AI integration](subscription-ai.md) supports
+ChatGPT only for app-captured official terms and allowlisted placeholder structures;
+account-backed AI verification and real-bank format qualification remain unverified.
 
 ## Validation readiness versus live verification
 
