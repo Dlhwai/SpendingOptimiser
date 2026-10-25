@@ -105,7 +105,7 @@ class GmailService:
         self.problem = None
         self.notice = (
             "Saved connection restored, not yet verified with Google. "
-            "Load mail to refresh authorization."
+            "Select Load month to refresh authorization."
         )
 
     def disconnect(self):
