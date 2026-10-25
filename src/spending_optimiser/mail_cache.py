@@ -7,6 +7,8 @@ from pydantic import TypeAdapter
 
 from .gmail import Candidate
 from .ledger import Ledger
+from .monthly import SINGAPORE
+from .storage import unpack
 
 CANDIDATE = TypeAdapter(Candidate)
 
@@ -33,6 +35,7 @@ class MailCache:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS mail_versions (namespace TEXT NOT NULL, "
                 "message_id TEXT NOT NULL, digest TEXT NOT NULL, payload TEXT NOT NULL, "
+                "receipt_month TEXT, "
                 "PRIMARY KEY(namespace, message_id, digest))"
             )
             db.execute(
@@ -66,12 +69,15 @@ class MailCache:
                     json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
                 ).hexdigest()
                 db.execute(
-                    "INSERT OR IGNORE INTO mail_versions VALUES (?, ?, ?, ?)",
+                    "INSERT OR IGNORE INTO mail_versions "
+                    "(namespace, message_id, digest, payload, receipt_month) "
+                    "VALUES (?, ?, ?, ?, ?)",
                     (
                         namespace,
                         observation.source_record_id,
                         digest,
                         CANDIDATE.dump_json(candidate).decode(),
+                        candidate.gmail_internal_at.astimezone(SINGAPORE).strftime("%Y-%m"),
                     ),
                 )
                 db.execute(
@@ -85,6 +91,8 @@ class MailCache:
                 (namespace, month.key, json.dumps(state)),
             )
 
+        self.ledger.maintain_storage()
+
     def candidates(self, namespace, month):
         # Versions are retained for evidence replay, including content changes.
         # Each observation appears once in the selected month's saved-mail view.
@@ -92,12 +100,13 @@ class MailCache:
             rows = db.execute(
                 "SELECT v.payload FROM mail_current c JOIN mail_versions v "
                 "ON v.namespace=c.namespace AND v.message_id=c.message_id AND v.digest=c.digest "
-                "WHERE c.namespace=? ORDER BY c.message_id",
-                (namespace,),
+                "WHERE c.namespace=? AND (v.receipt_month=? OR v.receipt_month IS NULL) "
+                "ORDER BY c.message_id",
+                (namespace, month.key),
             ).fetchall()
         latest = {}
         for (payload,) in rows:
-            candidate = CANDIDATE.validate_json(payload)
+            candidate = CANDIDATE.validate_json(unpack(payload))
             latest[candidate.observation.source_record_id] = candidate
         return {
             identity: candidate

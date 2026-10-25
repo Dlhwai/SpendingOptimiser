@@ -1,6 +1,8 @@
 """Rendered application contracts and real form journeys with synthetic dependencies."""
 
 import importlib.util
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -10,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from spending_optimiser.gmail_auth import NativeStore
 from spending_optimiser.monthly import calendar_month
+from spending_optimiser.storage import Storage
 from spending_optimiser.web import create_app
 
 # Load the standalone, documented preview entry point without a production dependency.
@@ -211,3 +214,97 @@ def test_rendered_errors_preserve_exception_headers(tmp_path):
     assert response.status_code == 405
     assert response.headers["allow"] == "POST"
     assert Page(response.text).attrs("div", role="alert")
+
+
+@pytest.mark.parametrize("operation", ["paste", "upload", "example", "review"])
+def test_write_maintenance_keeps_the_event_loop_responsive(tmp_path, monkeypatch, operation):
+    app = PREVIEW.preview_app(tmp_path)
+    text = (Path(__file__).parent / "fixtures/synthetic.json").read_text()
+    if operation == "review":
+        app.state.ledger.import_document(text)
+    entered = threading.Event()
+    release = threading.Event()
+    workers = []
+    compress = Storage.compress_if_needed
+
+    def blocked(self, **kwargs):
+        workers.append(threading.get_ident())
+        entered.set()
+        assert release.wait(10), "Synthetic maintenance was not released"
+        return compress(self, **kwargs)
+
+    monkeypatch.setattr(Storage, "compress_if_needed", blocked)
+    monkeypatch.setattr("spending_optimiser.storage.GB", 1)
+    with TestClient(app, base_url="http://127.0.0.1:8876") as client:
+        client.get("/imports")
+        loop_thread = client.portal.call(threading.get_ident)
+        fields = {"csrf": client.cookies["ledger_csrf"]}
+        kwargs = {}
+        if operation in {"paste", "upload"}:
+            path = "/import"
+            if operation == "paste":
+                fields["document"] = text
+            else:
+                kwargs["files"] = {"file": ("synthetic.json", text, "application/json")}
+        elif operation == "example":
+            path = "/example"
+        else:
+            path = "/review"
+            fields.update(
+                revision_id="test-purchase-v1",
+                actor="Synthetic",
+                reason="Checked",
+                status="accepted",
+                field="merchant",
+                fact_json='{"status":"proposed","value":"Synthetic cafe"}',
+            )
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            mutation = pool.submit(client.post, path, data=fields, **kwargs)
+            try:
+                assert entered.wait(5), "Write did not reach synthetic maintenance"
+                assert len(workers) == 1 and workers[0] != loop_thread
+                probe = pool.submit(client.get, "/imports")
+                assert probe.result(timeout=5).status_code == 200
+                assert not mutation.done()
+            finally:
+                release.set()
+            response = mutation.result(timeout=5)
+        assert response.status_code == 200
+        assert len(app.state.ledger.load().transactions) == (2 if operation == "review" else 1)
+
+
+@pytest.mark.parametrize("mode", ["partial", "full"])
+def test_monthly_preview_uses_singapore_query_and_preserves_pagination(tmp_path, monkeypatch, mode):
+    monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "examples"))
+    from monthly_preview import monthly_app
+
+    app = monthly_app(tmp_path, mode)
+    service = app.state.gmail
+    candidates, state = service.saved_month(MONTH)
+    expected = 2 if mode == "partial" else 5
+    assert set(candidates) == {f"preview-{i}" for i in range(expected)}
+    assert all(
+        candidate.text and MONTH.contains(candidate.gmail_internal_at)
+        for candidate in candidates.values()
+    )
+    assert state["pages"] == (1 if mode == "partial" else 3)
+    assert state["token"] == ("second" if mode == "partial" else None)
+    assert state["exhausted"] == (mode == "full")
+    assert state["duplicates"] == (0 if mode == "partial" else 1)
+    client = TestClient(app, base_url="http://127.0.0.1:8877")
+    client.get("/gmail?month=2025-02")
+    response = client.post(
+        "/gmail/month",
+        data={
+            "csrf": client.cookies["ledger_csrf"],
+            "month": MONTH.key,
+            "pages": "2",
+            "connection_id": service.connection_id,
+            "action": "continue",
+        },
+    )
+    assert response.status_code == 200 and "5 saved candidates" in response.text
+    candidates, state = service.saved_month(MONTH)
+    assert set(candidates) == {f"preview-{i}" for i in range(5)}
+    assert state["exhausted"] and state["pages"] == 3 and state["duplicates"] == 1
+    assert state["token"] is None and state["failed"] == {}

@@ -95,8 +95,9 @@ headers are retained. This adapter performs no DKIM/SPF/DMARC verification.
   `subject` separately decodes RFC2047 encoded words. `sender` is the decoded
   single untrusted From claim for display only. An absent From header becomes
   `None` without a warning; duplicate or undecodable From headers become `None`
-  with an `ambiguous_sender`/`undecodable_sender` warning and never reject the candidate.
-  `parts` contain every inline `text/plain` and `text/html` alternative, with MIME type, payload/body
+  with an `ambiguous_sender` or `undecodable_sender` warning, respectively.
+  These sender conditions never reject the candidate. `parts` contain every
+  inline `text/plain` and `text/html` alternative, with MIME type, payload/body
   locator, normalized text and a digest of the decoded part bytes. A later
   private extractor can cite `EvidenceRef(target="observation",
   evidence_revision_id=candidate.observation.observation_id, locator=part.locator)`.
@@ -281,10 +282,13 @@ client entry is shared by this OS app; saved authorization is keyed by the
 absolute ledger-path digest. **Monthly mail and checkpoints persist as readable
 SQLite data with no app-level encryption**, scoped by stable Google identity,
 including headers, message text, every retained content version, failed-message
-IDs and successful-ID/page-token continuation. Additive mail tables do not
-rewrite existing ledger records or change ledger format 1. Protect disk/backups.
-Saved mail is retained indefinitely; there is no retention, purge or deletion
-action. Disconnect does not remove the local cache or ledger history, only
+IDs and successful-ID/page-token continuation. Existing ledger records stay intact.
+Local database format 2 supports verified compressed payloads, not encryption;
+JSON schema stays 1.0. Protect disk/backups. [Storage & archives](storage.md)
+keeps the current Singapore month plus preceding two mail months uncompressed,
+losslessly compresses eligible older detail above 1 decimal GB, and can restore
+a selected account/month locally. Saved mail is retained indefinitely; there is
+no purge or deletion action. Disconnect does not remove the local cache or ledger history, only
 visible access and authorization.
 
 Restart hides mail and clears browser sessions, without accessing the credential

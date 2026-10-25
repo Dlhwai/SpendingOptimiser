@@ -21,10 +21,12 @@ subscription for official public terms and placeholder structures only.
    is proven undecodable (`invalid_message`) or over the response limit
    (`response_too_large`) is retained as an unresolved ID for this account and
    month, and later pages continue. **Retry failed messages** re-fetches only
-   those IDs. Exhaustion with unresolved messages is labeled incomplete
-   coverage. Page and duplicate counts are added once per completed page, not
-   per retry. API failures, invalid/expired tokens and pagination cycles are
-   explicit. **Refresh month**
+   those IDs, up to 20 per selected page. Unsuccessful attempts move to the end
+   of the persisted account/month retry order, so repeated bounded retries reach
+   later IDs even across restarts. Exhaustion with unresolved messages is labeled
+   incomplete coverage. Page and duplicate counts are added once per completed
+   page, not per retry. API failures, invalid/expired tokens and pagination cycles
+   are explicit. **Refresh month**
    restarts the query while preserving/deduplicating saved data. There are no
    automatic retries, mailbox backfills, watch/history sync or schedules.
 5. Inspect escaped saved candidate text. These are raw candidates, including
@@ -88,10 +90,13 @@ and real-bank format compatibility remain unverified.
 ## Saved mail and storage
 
 The existing private SQLite database now adds `mail_versions`, `mail_current` and
-`mail_scans` tables without rewriting schema records or advancing ledger format 1.
+`mail_scans` tables without rewriting schema records. Local database format 2
+supports verified compressed payloads; JSON schema remains 1.0.
 Saved mail (headers, message text and every retained content version) is
-readable SQLite data protected only by OS file access. There is no app-level
-encryption.
+locally readable SQLite data protected only by OS file access. Eligible older
+detail is losslessly compressed above 1 decimal GB; the current Singapore month
+and preceding two stay hot. See [storage measurement, restoration and recovery](storage.md).
+There is no app-level encryption.
 New databases retain owner-only file permissions. Protect backups and disk access.
 No mail is promoted to the immutable financial observation/event tables by loading.
 
@@ -109,7 +114,7 @@ identity restores its cache; another account sees only its own mail. The default
 page never opens the native store or authorizes a network request. Credential
 store access remains explicit Connect/Restore/Load/Disconnect actions. OS access
 is trusted; this is not multi-user access control. Saved mail is retained after
-disconnect, and there is no retention, purge or deletion action. Calendar-month
+disconnect. Compression retains older content recoverably; there is no purge or deletion action. Calendar-month
 loading is the only Gmail retrieval path.
 
 ## Reproducible synthetic desktop preview

@@ -35,6 +35,7 @@ from .gmail_service import GmailService
 from .ledger import CORRECTION_FIELDS, Conflict, Ledger, heads, needs_review, uncertain
 from .monthly import SINGAPORE, calendar_month, format_money, grouping, monthly_report
 from .public_terms import ISSUERS
+from .storage import Storage
 
 MAX_BODY = 2 * 1024 * 1024
 DEFAULT_DB = Path.home() / ".local" / "share" / "spending-optimiser" / "ledger.sqlite3"
@@ -109,6 +110,9 @@ def create_app(
     ai = ai_service if ai_service is not None else AIService(ledger, binary=codex_client)
     app.state.ai = ai
     app.add_event_handler("shutdown", ai.close)
+    storage = Storage(ledger)
+    app.state.storage = storage
+    app.state.storage_result = None
     gmail_lock = threading.Lock()
     csrf = secrets.token_urlsafe(32)
     templates = Jinja2Templates(directory=str(files("spending_optimiser").joinpath("templates")))
@@ -130,7 +134,13 @@ def create_app(
         response = templates.TemplateResponse(
             request=request,
             name=name,
-            context={"csrf": csrf, **context},
+            context={
+                "csrf": csrf,
+                "maintenance_warning": (
+                    ledger.maintenance_warning or gmail.cache.ledger.maintenance_warning
+                ),
+                **context,
+            },
             status_code=status_code,
         )
         response.set_cookie("ledger_csrf", csrf, httponly=True, samesite="strict")
@@ -209,7 +219,7 @@ def create_app(
                 return None
 
     @app.get("/gmail", response_class=HTMLResponse)
-    async def gmail_page(request: Request):
+    def gmail_page(request: Request):
         request.session.setdefault("id", secrets.token_urlsafe(32))
         month = calendar_month(request.query_params.get("month"))
         view = copy(gmail)  # one account identity per rendered response, even during switches
@@ -223,7 +233,48 @@ def create_app(
             candidates=candidates,
             scan=scan,
             matches=ai.format_proposals(candidates) if view.connection else {},
+            archived=storage.mail_archived(view.namespace, month),
         )
+
+    @app.get("/storage", response_class=HTMLResponse)
+    def storage_page(request: Request):
+        month = calendar_month(request.query_params.get("month"))
+        return render(
+            request,
+            "storage.html",
+            storage=storage.status(),
+            result=app.state.storage_result,
+            gmail=copy(gmail),
+            month=month,
+        )
+
+    @app.post("/storage/compress")
+    async def storage_compress(request: Request):
+        await form_data(request, set())
+        app.state.storage_result = await run_in_threadpool(storage.compress_if_needed)
+        for owner in (ledger, gmail.cache.ledger):
+            owner.maintenance_warning = app.state.storage_result.get("warning")
+        return RedirectResponse("/storage", status_code=303)
+
+    @app.post("/storage/restore")
+    async def storage_restore(request: Request):
+        form = await form_data(request, {"month", "connection_id"})
+        month = calendar_month(text_field(form, "month"))
+        connection_id = text_field(form, "connection_id")
+
+        def restore():
+            if gmail.connection is None or not secrets.compare_digest(
+                connection_id.encode(), gmail.connection_id.encode()
+            ):
+                raise HTTPException(409, "Account changed; reload before restoring saved mail")
+            restored = storage.restore_mail(gmail.namespace, month)
+            gmail.notice_month = month.key
+            gmail.notice = (
+                f"Restored {restored} saved mail versions for {month.label}. No mail fetched."
+            )
+
+        await run_in_threadpool(gmail_operation, restore)
+        return RedirectResponse("/gmail?" + urlencode({"month": month.key}), status_code=303)
 
     @app.post("/gmail/connect", response_class=HTMLResponse)
     async def gmail_connect(request: Request):
@@ -309,7 +360,7 @@ def create_app(
             return None
 
     @app.get("/ai", response_class=HTMLResponse)
-    async def ai_page(request: Request, snapshot: str = ""):
+    def ai_page(request: Request, snapshot: str = ""):
         preview = ai.preview(snapshot) if snapshot else None
         return render(
             request,
@@ -347,7 +398,7 @@ def create_app(
     @app.post("/ai/save")
     async def ai_save(request: Request):
         form = await form_data(request, {"content"})
-        identity = ai.save_format(text_field(form, "content"))
+        identity = await run_in_threadpool(ai.save_format, text_field(form, "content"))
         return RedirectResponse("/ai?" + urlencode({"snapshot": identity}), 303)
 
     @app.post("/ai/import")
@@ -374,7 +425,7 @@ def create_app(
         )
 
     @app.get("/ai/proposal", response_class=HTMLResponse)
-    async def ai_proposal(request: Request, id: str):
+    def ai_proposal(request: Request, id: str):
         record = ai.find_proposal(id)
         if record is None:
             raise HTTPException(404, "Proposal is missing or belongs to another connection")
@@ -395,7 +446,7 @@ def create_app(
         return RedirectResponse("/ai", 303)
 
     @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request):
+    def index(request: Request):
         document = ledger.load()
         month = calendar_month(request.query_params.get("month"))
         view = copy(gmail)
@@ -413,7 +464,7 @@ def create_app(
         )
 
     @app.get("/ledger", response_class=HTMLResponse)
-    async def ledger_page(request: Request):
+    def ledger_page(request: Request):
         document = ledger.load()
         transactions = heads(document)
         month = (
@@ -440,7 +491,7 @@ def create_app(
         return render(request, "imports.html")
 
     @app.get("/review", response_class=HTMLResponse)
-    async def queue(request: Request):
+    def queue(request: Request):
         document = ledger.load()
         transactions = [t for t in heads(document) if needs_review(t)]
         return render(
@@ -454,7 +505,7 @@ def create_app(
         )
 
     @app.get("/transaction", response_class=HTMLResponse)
-    async def detail(request: Request, event_id: str):
+    def detail(request: Request, event_id: str):
         document = ledger.load()
         history = [t for t in document.transactions if t.event_id == event_id]
         transaction = next((t for t in heads(document) if t.event_id == event_id), None)
@@ -494,7 +545,7 @@ def create_app(
                 raise HTTPException(422, "file must be an uploaded JSON document")
             if not text.strip():
                 raise HTTPException(422, "Select a JSON file or paste a schema document")
-            return import_result(text)
+            return await run_in_threadpool(import_result, text)
         finally:
             await form.close()
 
@@ -502,20 +553,20 @@ def create_app(
     async def example(request: Request):
         await form_data(request, set())
         text = files("spending_optimiser").joinpath("examples/synthetic.json").read_text()
-        return import_result(text)
+        return await run_in_threadpool(import_result, text)
 
     @app.post("/review")
     async def review(request: Request):
         fields = {"revision_id", "actor", "reason", "status", "field", "fact_json"}
         form = await form_data(request, fields)
         values = {name: text_field(form, name) for name in fields}
-        transaction = ledger.review(**values)
+        transaction = await run_in_threadpool(ledger.review, **values)
         return RedirectResponse(
             "/transaction?" + urlencode({"event_id": transaction.event_id}), status_code=303
         )
 
     @app.get("/public", response_class=HTMLResponse)
-    async def public(request: Request):
+    def public(request: Request):
         document = ledger.load()
         return render(
             request,

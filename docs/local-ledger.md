@@ -49,11 +49,12 @@ material, credentials, screenshots containing financial data, or exports.
    `tests/fixtures/synthetic.json` using **Import a schema document**. Both paths
    run the same validation and persistence code. Paste JSON or upload a file, not
    both; the complete request must fit within 2 MiB including form overhead.
-2. Expect **11 new records** in the import notice. Open **Transactions** to see
-   **1 event** and **1 need review**. Counts include public products/evidence/rules
-   and private accounts/cards/observations/events. The purchase is SGD 1234
-   **minor units** (SGD 12.34). Its monthly inclusion follows the
-   [monthly workflow](monthly.md#inclusion-rules-and-financial-meaning).
+2. Expect **11 new records** in the import notice. Open **Transactions > All saved
+   records** for **1 event** needing review; Overview defaults to the current
+   month, while this fixture's event is dated January 2025. Import counts include
+   public products/evidence/rules and private accounts/cards/observations/events.
+   The purchase is SGD 1234 **minor units** (SGD 12.34). See the [monthly inclusion
+   rules](monthly.md#inclusion-rules-and-financial-meaning) for summary eligibility.
 3. Open **Review queue**, then **test-purchase**. Inspect per-field uncertainty,
    evidence locators, the private synthetic observation, and the original history.
    Unknown posting date, merchant, MCC, and other optional values are not inferred.
@@ -122,7 +123,9 @@ build. See the README's disposable synthetic preview for safe UI exploration.
   Different content under an existing immutable identity yields HTTP 409, never a
   replacement. Cross-import source collisions, history forks, multiple roots,
   dangling links, and other combined-document conflicts also yield 409. Invalid
-  standalone documents yield 422. Database failures yield 503 with no partial save.
+  standalone documents yield 422. Pre-commit database failures yield 503 with no
+  partial import/review save. For post-commit maintenance warnings, see
+  [storage safety and recovery](storage.md#safety-and-migration).
 - Only a validated linear chain's latest transaction revision is shown as the
   ledger event. Older revisions remain available in detail history. Explicit
   `duplicate_of` links are retained and labeled, not silently merged or totaled.
@@ -161,10 +164,12 @@ Uploaded bodies are bounded to 2 MiB. This ledger workflow makes no model calls 
 transaction telemetry. The separate [safe-reference AI workflow](subscription-ai.md)
 never receives imported private data. Tests and smoke validation use synthetic material.
 
-There is no multi-user login, encryption at rest, retention/deletion UI, migrations beyond
-local database format 1, automatic backups, ledger-table pagination, or production hosting
-support. Do not expose the service through a proxy, LAN bind, or tunnel; the local
-OS user and other software on the machine remain trusted. All database readers
+There is no multi-user login, application-level encryption at rest, deletion UI,
+automatic backups, ledger-table pagination, or production hosting support.
+See [Storage & archives](storage.md) for compression, saved-month restoration,
+database migration and post-write maintenance. Do not expose the service through
+a proxy, LAN bind, or tunnel; the local OS user and other software on the machine
+remain trusted. All database readers
 can see private material. For a backup, stop the service and copy the database
 (and any SQLite sidecars if present) to a private location. Protect backups like
 financial source data. Large histories are loaded as one document, so this

@@ -5,6 +5,10 @@ A planned personal spending tracker for maximizing credit-card rewards while kee
 **Status: deterministic desktop monthly views, account-scoped saved Gmail candidates, and the local import/review ledger are implemented. Monthly loading is explicit, bounded and resumable. All page views read saved data only. OAuth/retrieval are synthetic-tested; live Gmail still needs your setup and consent. An optional, restricted subscription-backed Codex workflow now analyses only saved official issuer terms captured by the app on request, or allowlisted placeholder structures. Live AI accounts and qualified bank-email extraction have not been verified.**
 
 Start with the [monthly workflow, inclusion rules and safe preview](docs/monthly.md).
+[Storage & archives](docs/storage.md) keeps historical financial views readable,
+retains the current Singapore month plus two preceding mail months uncompressed,
+and losslessly compresses eligible older detail only above 1,000,000,000 bytes.
+This is not deletion, encryption or a hard storage cap.
 
 ## Project context
 

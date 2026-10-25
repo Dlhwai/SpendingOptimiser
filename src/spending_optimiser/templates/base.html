@@ -21,13 +21,14 @@
 <nav aria-label="Data navigation">
 <a href="/imports" {% if request.url.path == '/imports' %}aria-current="page"{% endif %}><span class="nav-icon" aria-hidden="true">+</span>Import data</a>
 <a href="/public" {% if request.url.path == '/public' %}aria-current="page"{% endif %}><span class="nav-icon" aria-hidden="true">≡</span>Card evidence</a>
+<a href="/storage" {% if request.url.path == '/storage' %}aria-current="page"{% endif %}><span class="nav-icon" aria-hidden="true">▤</span>Storage & archives</a>
 </nav>
 <div class="sidebar-foot"><span class="status-dot" aria-hidden="true"></span>Private by design<p>On this device.<br>Mail loads only when you ask.</p></div>
 </aside>
 <div class="workspace">
 <header class="topbar"><span>Personal finance workspace</span><span class="local-badge"><span class="status-dot" aria-hidden="true"></span> Local only</span></header>
 {% if request.app.state.synthetic_preview|default(false) %}<div class="preview-banner">SYNTHETIC PREVIEW - Fictional account, mail and imported example. No Google/model requests or native credential access.</div>{% endif %}
-<main id="main" tabindex="-1">{% block content %}{% endblock %}</main>
+<main id="main" tabindex="-1">{% if maintenance_warning %}<div class="warning" role="status">{{ maintenance_warning }} <a href="/storage">Storage & archives</a></div>{% endif %}{% block content %}{% endblock %}</main>
 <footer class="workspace-footer"><span>SpendingOptimiser · Your local workspace</span><span>AI only on explicit analysis. No background mail sync.</span></footer>
 </div>
 </div>

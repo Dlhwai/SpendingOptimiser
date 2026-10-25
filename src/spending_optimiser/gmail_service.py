@@ -169,6 +169,7 @@ class GmailService:
                     state["seen"].append(message_id)
                     del state["failed"][message_id]
                 else:
+                    del state["failed"][message_id]
                     state["failed"][message_id] = result.error.code
                     errors.append(result.error.code)
             self.verify(connection, errors)
