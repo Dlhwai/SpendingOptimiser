@@ -1,10 +1,13 @@
 """Synthetic-only AI workflow tests. Real enforcement proof is retained in task evidence."""
 
 import hashlib
+import http.client
 import importlib.util
 import io
 import json
+import socket
 import subprocess
+import threading
 import time
 import tomllib
 from datetime import UTC, datetime
@@ -474,20 +477,50 @@ def test_total_import_deadline_ends_retrieval_and_preserves_found_documents():
     assert len(inner.requests) == 3 and not complete
 
 
-def test_slow_dribbling_body_cannot_outlast_the_import_deadline():
-    clock = FakeClock()
-    budget = Budget(clock)
-    timeouts = []
+@pytest.mark.parametrize(
+    ("prefix", "dribble"),
+    [
+        (b"HTTP/1.1 200 OK\r\n", b"X-Slow: " + b"a" * 200),
+        (
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nTransfer-Encoding: chunked\r\n\r\n",
+            b"0" * 200,
+        ),
+    ],
+)
+def test_slow_dribbling_headers_or_chunks_cannot_outlast_the_import_deadline(
+    monkeypatch, prefix, dribble
+):
+    monkeypatch.setattr(public_terms, "IMPORT_SECONDS", 0.3)
+    monkeypatch.setattr(public_terms, "TIMEOUT", 0.2)
+    server, client = socket.socketpair()
+    stop = threading.Event()
 
-    class Dribble:
-        def read1(self, size):
-            clock.now += 14
-            return b"x"
+    def serve():
+        try:
+            server.sendall(prefix)
+            for byte in dribble:
+                if stop.wait(0.05):
+                    break
+                server.sendall(bytes([byte]))
+        except OSError:
+            pass
 
-    with pytest.raises(FetchProblem, match="time budget exhausted"):
-        read_body(Dribble(), budget, timeouts.append)
-    assert clock.now - 1000.0 <= public_terms.IMPORT_SECONDS + public_terms.TIMEOUT
-    assert all(0 < limit <= public_terms.TIMEOUT for limit in timeouts)
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    budget = Budget()
+    sock = public_terms.deadline_socket(socket.socket, budget)(fileno=client.detach())
+    started = time.monotonic()
+    try:
+        with pytest.raises((FetchProblem, TimeoutError)):
+            response = http.client.HTTPResponse(sock)
+            response.begin()
+            read_body(response, budget)
+    finally:
+        stop.set()
+        sock.close()
+        server.close()
+        thread.join(1)
+    assert time.monotonic() - started < public_terms.IMPORT_SECONDS + 0.2
 
 
 def test_import_timeout_keeps_safe_captures_and_never_starts_ai(app, client, monkeypatch):

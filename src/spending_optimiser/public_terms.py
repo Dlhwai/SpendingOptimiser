@@ -110,11 +110,33 @@ def official(issuer, url, base=None):
     return urldefrag(url)[0]
 
 
-def read_body(response, budget, settimeout):
-    """Bounded chunks; every blocking read is limited by the import's remaining time."""
+def deadline_socket(base, budget):
+    """Socket class whose every blocking send/receive is limited by the import deadline."""
+
+    class Bounded(base):
+        def _limit(self):
+            self.settimeout(min(TIMEOUT, budget.remaining()))
+
+        def recv(self, *args):
+            self._limit()
+            return super().recv(*args)
+
+        def recv_into(self, *args):
+            self._limit()
+            return super().recv_into(*args)
+
+        def sendall(self, *args):
+            self._limit()
+            return super().sendall(*args)
+
+    return Bounded
+
+
+def read_body(response, budget):
+    """Bounded chunks; the socket itself enforces the import deadline on each read."""
     chunks, size = [], 0
     while True:
-        settimeout(min(TIMEOUT, budget.remaining()))
+        budget.remaining()
         chunk = response.read1(65536)
         if not chunk:
             return b"".join(chunks)
@@ -134,15 +156,18 @@ def https_get(url, budget, resolve=socket.getaddrinfo):
         raise FetchProblem("Official host could not be resolved") from None
     if not addresses or not all(ipaddress.ip_address(a).is_global for a in addresses):
         raise FetchProblem("Official host resolved to a private or local address")
+    context = ssl.create_default_context()
+    context.sslsocket_class = deadline_socket(ssl.SSLSocket, budget)
 
     class Pinned(http.client.HTTPSConnection):
         def connect(self):
-            sock = socket.create_connection((sorted(addresses)[0], 443), self.timeout)
-            self.sock = self.tls = self._context.wrap_socket(sock, server_hostname=host)
+            sock = socket.create_connection(
+                (sorted(addresses)[0], 443), min(TIMEOUT, budget.remaining())
+            )
+            sock.settimeout(min(TIMEOUT, budget.remaining()))
+            self.sock = self._context.wrap_socket(sock, server_hostname=host)
 
-    connection = Pinned(
-        host, 443, timeout=min(TIMEOUT, budget.remaining()), context=ssl.create_default_context()
-    )
+    connection = Pinned(host, 443, context=context)
     try:
         connection.request(
             "GET",
@@ -153,7 +178,7 @@ def https_get(url, budget, resolve=socket.getaddrinfo):
             },
         )
         response = connection.getresponse()
-        body = read_body(response, budget, connection.tls.settimeout)
+        body = read_body(response, budget)
         return response.status, {k.lower(): v for k, v in response.getheaders()}, body
     except (OSError, http.client.HTTPException):
         raise FetchProblem("Official document retrieval failed") from None

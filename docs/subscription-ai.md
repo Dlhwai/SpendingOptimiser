@@ -26,8 +26,9 @@ part of this change.
   (including redirects, at most 3) must stay on the issuer's listed hosts. Hostnames
   must resolve only to public addresses and the connection is pinned to a checked
   address. No proxy, cookies, authorization or session headers. Bodies are read in
-  chunks capped at 2 MiB; each blocking read waits at most 15 s and never past the
-  import's 45-second deadline. Captures made before the deadline are kept. Only
+  chunks capped at 2 MiB. Every connect, TLS handshake, send and socket read (status
+  line, headers, chunk sizes and body) waits at most 15 s and never past the import's
+  45-second deadline. Captures made before the deadline are kept. Only
   `text/html`/`text/plain` are read, scripts/styles are dropped and extracted text
   over 24,000 characters is refused. PDFs, other sites, failed, malformed or oversized
   documents and searches that hit the request or time budget are shown as unavailable.
