@@ -21,10 +21,12 @@ subscription for official public terms and placeholder structures only.
    is proven undecodable (`invalid_message`) or over the response limit
    (`response_too_large`) is retained as an unresolved ID for this account and
    month, and later pages continue. **Retry failed messages** re-fetches only
-   those IDs. Exhaustion with unresolved messages is labeled incomplete
-   coverage. Page and duplicate counts are added once per completed page, not
-   per retry. API failures, invalid/expired tokens and pagination cycles are
-   explicit. **Refresh month**
+   those IDs, up to 20 per selected page. Unsuccessful attempts move to the end
+   of the persisted account/month retry order, so repeated bounded retries reach
+   later IDs even across restarts. Exhaustion with unresolved messages is labeled
+   incomplete coverage. Page and duplicate counts are added once per completed
+   page, not per retry. API failures, invalid/expired tokens and pagination cycles
+   are explicit. **Refresh month**
    restarts the query while preserving/deduplicating saved data. There are no
    automatic retries, mailbox backfills, watch/history sync or schedules.
 5. Inspect escaped saved candidate text. These are raw candidates, including

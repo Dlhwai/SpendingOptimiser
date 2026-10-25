@@ -60,12 +60,14 @@ original are committed. Retrieval checkpoints and unresolved-message IDs are
 never compressed or evicted.
 
 Compression is **not deletion, encryption or a storage cap**. The app attempts all
-eligible records, then SQLite `VACUUM` to reclaim free database pages. Compaction
-can fail for insufficient disk space/locks; committed compressed content remains
-usable, but physical file size may not fall yet. The UI reports whether compaction
-completed and how many corrupt/unsupported payloads were skipped by a manual
-check. If usage remains above the trigger, it says so honestly. Nothing is purged
-and current working data is not evicted to reach 1 GB.
+eligible records, then runs SQLite `VACUUM` if it compressed any payloads or
+reclaimable free pages remain. Compaction can fail for insufficient disk space or
+locks; committed compressed content remains usable, but physical file size may
+not fall yet. After failed or interrupted compaction, a later above-trigger write
+or manual check can retry it even with **0 newly compressed payloads**. The UI
+reports whether compaction completed and how many corrupt/unsupported payloads
+were skipped by a manual check. If usage remains above the trigger, it says so
+honestly. Nothing is purged and current working data is not evicted to reach 1 GB.
 
 ## Reading and restoring
 
@@ -106,10 +108,15 @@ rows are never replaced by archive references.
 Each compression batch and each restoration is a separate `BEGIN IMMEDIATE`
 transaction: interruption commits either all replacements or none, with SQLite
 journal recovery. Failure of a compression write cannot delete the only original.
-Primary imports/reviews/mail pages commit **before** maintenance, so a later
-maintenance error can leave that successful application operation saved. Retrying
-an import is idempotent; refresh a review before retrying. VACUUM runs only after
-compression commits, using SQLite's own transactional recovery.
+Primary imports/reviews/mail pages commit **before** maintenance. A later SQLite
+or filesystem maintenance failure preserves the successful operation and shows a
+separate **Storage maintenance could not finish** warning, not **Request not
+saved**. Do not replay the saved operation to retry maintenance: check disk space
+and access, then use **Check storage / compress eligible detail** in Storage &
+archives. A successful manual check clears the warning. Pre-commit write failures
+still roll back the failed operation; earlier completed mail pages remain saved.
+VACUUM runs only after compression commits, using SQLite's own transactional
+recovery.
 
 Corrupt archives produce an explicit error, not an empty result. Restoration
 rolls back instead of discarding an unreadable version; other accounts and the
