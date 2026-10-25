@@ -3,10 +3,13 @@
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import date, datetime, timedelta, timezone
 
 from .common import CURRENCY_EXPONENTS
 from .ledger import CORRECTION_FIELDS, heads
+
+# Asia/Singapore has used a fixed UTC+08:00 offset since 1982, before Gmail existed.
+SINGAPORE = timezone(timedelta(hours=8), "SGT")
 
 
 @dataclass(frozen=True)
@@ -22,14 +25,17 @@ class Month:
     @property
     def query(self):
         # Gmail date strings use provider timezone defaults. Epoch seconds plus a
-        # local half-open UTC filter avoid that ambiguity, including midnight.
-        start = int(datetime.combine(self.start, datetime.min.time(), UTC).timestamp())
-        end = int(datetime.combine(self.end, datetime.min.time(), UTC).timestamp())
+        # local half-open Singapore filter avoid that ambiguity, including midnight.
+        start = int(datetime.combine(self.start, datetime.min.time(), SINGAPORE).timestamp())
+        end = int(datetime.combine(self.end, datetime.min.time(), SINGAPORE).timestamp())
         return f"after:{start - 1} before:{end}"
+
+    def contains(self, instant):
+        return self.start <= instant.astimezone(SINGAPORE).date() < self.end
 
 
 def calendar_month(value=None):
-    value = date.today().strftime("%Y-%m") if value is None else value
+    value = datetime.now(SINGAPORE).strftime("%Y-%m") if value is None else value
     if not re.fullmatch(r"[0-9]{4}-[0-9]{2}", value):
         raise ValueError("Choose a calendar month in YYYY-MM format")
     year, month = map(int, value.split("-"))
@@ -128,8 +134,8 @@ def monthly_report(document, month):
                 "currency": currency,
                 "groups": by_group,
                 "daily": timeline,
-                "maximum_group": max((r["minor_units"] for r in by_group), default=1),
-                "maximum_day": max((r["minor_units"] for r in timeline), default=1),
+                "maximum_group": max((r["minor_units"] for r in by_group), default=0) or 1,
+                "maximum_day": max((r["minor_units"] for r in timeline), default=0) or 1,
                 "totals": {
                     kind: totals[currency, kind]
                     for kind in ("purchase", "refund", "reversal", "income", "transfer")

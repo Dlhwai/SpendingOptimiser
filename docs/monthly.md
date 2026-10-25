@@ -14,13 +14,23 @@ acceptance, background sync or customizable dashboard configuration.
    Default: 2 pages. Duplicate IDs count toward that per-action bound.
 4. Use **Continue / retry month** until **Query exhausted**. A successful empty
    nonterminal page remains incomplete. Successful candidates survive failures;
-   retry replays the unadvanced page, skipping only successful IDs. API failures,
-   invalid/expired tokens and pagination cycles are explicit. **Refresh month**
+   retry replays the unadvanced page, skipping resolved IDs. Listing, network,
+   rate-limit and authentication failures never advance the page. A message that
+   is proven undecodable (`invalid_message`) or over the response limit
+   (`response_too_large`) is retained as an unresolved ID for this account and
+   month, and later pages continue. **Retry failed messages** re-fetches only
+   those IDs. Exhaustion with unresolved messages is labeled incomplete
+   coverage. Page and duplicate counts are added once per completed page, not
+   per retry. API failures, invalid/expired tokens and pagination cycles are
+   explicit. **Refresh month**
    restarts the query while preserving/deduplicating saved data. There are no
    automatic retries, mailbox backfills, watch/history sync or schedules.
 5. Inspect escaped saved candidate text. These are raw candidates, including
    unrelated messages, not accepted transactions. Gmail receipt time uses a
-   half-open UTC month; it is not the financial event date. Query exhaustion is
+   half-open Singapore-time month (Asia/Singapore, UTC+08:00): mail received at
+   00:30 on 1 March in Singapore belongs to March, even though its UTC time is in
+   February. Month selectors default to the current Singapore month. Receipt
+   time is not the financial event date; ledger event dates stay date-only facts. Query exhaustion is
    not proof of financial completeness or a stable mailbox snapshot. Refresh
    does not erase previously saved mail absent from the latest provider response.
 6. Open the **Overview**, choose the financial event month, and inspect latest
@@ -74,27 +84,28 @@ No API-key form or fake working AI connection is provided.
 
 The existing private SQLite database now adds `mail_versions`, `mail_current` and
 `mail_scans` tables without rewriting schema records or advancing ledger format 1.
-Mail is plaintext private data protected by OS file access, not encrypted at rest.
+Saved mail (headers, message text and every retained content version) is
+readable SQLite data protected only by OS file access. There is no app-level
+encryption.
 New databases retain owner-only file permissions. Protect backups and disk access.
 No mail is promoted to the immutable financial observation/event tables by loading.
 
 Cache keys use the stable Google `sub` namespace plus message ID, never email
 address, subject or amount. Month checkpoints retain page tokens, successful IDs,
-page/duplicate counts, last action time, errors and an exhaustion flag. Changed
+unresolved failed-message IDs and codes, page/duplicate counts, last action time, errors and an exhaustion flag. Changed
 normalized mail snapshots retain previous versions; repeated identical content
 (without counting a new retrieval clock as new content) is duplicate-safe. The
 current pointer selects the most recently retrieved content even when it reverts
 to an earlier version. Stored observation IDs remain stable.
 
-Disconnect hides all saved mail, clears the legacy temporary recent batch,
-cancels sign-ins and deletes saved refresh authorization from the native store.
+Disconnect hides all saved mail, cancels sign-ins and deletes saved refresh authorization from the native store.
 **It does not delete saved mail or ledger history.** The same stable Google
 identity restores its cache; another account sees only its own mail. The default
 page never opens the native store or authorizes a network request. Credential
 store access remains explicit Connect/Restore/Load/Disconnect actions. OS access
-is trusted; this is not multi-user access control. No retention/deletion UI is
-implemented. The older bounded recent-load endpoint remains compatible, with a
-separate temporary-batch view, but is not the primary monthly path.
+is trusted; this is not multi-user access control. Saved mail is retained after
+disconnect, and there is no retention, purge or deletion action. Calendar-month
+loading is the only Gmail retrieval path.
 
 ## Reproducible synthetic desktop preview
 

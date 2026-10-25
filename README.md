@@ -56,7 +56,7 @@ See [local setup, full synthetic walkthrough, storage/review guarantees, and lim
 
 ## Gmail adapter
 
-See [exact Google Cloud/client setup, connect/load/disconnect, privacy and limits](docs/gmail.md). Gmail sign-in uses Google's Desktop authorization-code flow with PKCE, native OS credential storage, and a loopback callback. Save a calendar month in bounded pages only when you request it; Continue until the query is exhausted. Candidates and checkpoints persist by stable Google account identity, separate from ledger facts. Incomplete retrieval is labeled; exhaustion is not proof of financial coverage. Disconnect hides saved mail and forgets authorization, not the local cache.
+See [exact Google Cloud/client setup, connect/load/disconnect, privacy and limits](docs/gmail.md). Gmail sign-in uses Google's Desktop authorization-code flow with PKCE, native OS credential storage, and a loopback callback. Save a Singapore-time calendar month (UTC+08:00) in bounded pages only when you request it; Continue until the query is exhausted. Undecodable messages are kept as unresolved IDs with a targeted retry, so later pages still load. Candidates and checkpoints persist by stable Google account identity, separate from ledger facts. Incomplete retrieval is labeled; exhaustion is not proof of financial coverage. Disconnect hides saved mail and forgets authorization, not the local cache. Saved mail is readable local SQLite with no app-level encryption and no deletion action.
 Run the synthetic example without credentials or network access:
 
 ```sh

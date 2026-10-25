@@ -29,7 +29,7 @@ from .document import walk
 from .gmail_auth import MESSAGES, GmailProblem, NativeStore, configure_google
 from .gmail_service import GmailService
 from .ledger import CORRECTION_FIELDS, Conflict, Ledger, heads, needs_review, uncertain
-from .monthly import calendar_month, format_money, grouping, monthly_report
+from .monthly import SINGAPORE, calendar_month, format_money, grouping, monthly_report
 
 MAX_BODY = 2 * 1024 * 1024
 DEFAULT_DB = Path.home() / ".local" / "share" / "spending-optimiser" / "ledger.sqlite3"
@@ -103,6 +103,7 @@ def create_app(database: str | Path | None = None, *, gmail_service=None) -> Fas
     csrf = secrets.token_urlsafe(32)
     templates = Jinja2Templates(directory=str(files("spending_optimiser").joinpath("templates")))
     templates.env.globals["money"] = format_money
+    templates.env.globals["singapore"] = SINGAPORE
     # Only an opaque session ID goes in this signed, HttpOnly cookie. Lax permits
     # Google's top-level callback GET; existing mutation CSRF cookie stays Strict.
     app.add_middleware(
@@ -203,16 +204,14 @@ def create_app(database: str | Path | None = None, *, gmail_service=None) -> Fas
         month = calendar_month(request.query_params.get("month"))
         view = copy(gmail)  # one account identity per rendered response, even during switches
         candidates, scan = view.saved_month(month)
-        recent = request.query_params.get("recent") == "1"
         return render(
             request,
             "gmail.html",
             gmail=view,
             messages=MESSAGES,
             month=month,
-            candidates=view.candidates if recent else candidates,
+            candidates=candidates,
             scan=scan,
-            recent=recent,
         )
 
     @app.post("/gmail/connect", response_class=HTMLResponse)
@@ -282,18 +281,6 @@ def create_app(database: str | Path | None = None, *, gmail_service=None) -> Fas
             text_field(form, "action"),
         )
         return RedirectResponse("/gmail?" + urlencode({"month": month.key}), status_code=303)
-
-    @app.post("/gmail/load")
-    async def gmail_load(request: Request):
-        form = await form_data(request, {"days", "limit", "connection_id"})
-        try:
-            days, limit = int(text_field(form, "days")), int(text_field(form, "limit"))
-        except ValueError:
-            raise HTTPException(422, "Choose numeric range and limit") from None
-        await run_in_threadpool(
-            gmail_operation, gmail.load, days, limit, text_field(form, "connection_id")
-        )
-        return RedirectResponse("/gmail?recent=1", status_code=303)
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):

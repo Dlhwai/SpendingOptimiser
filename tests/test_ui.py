@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from spending_optimiser.gmail_auth import NativeStore
+from spending_optimiser.monthly import calendar_month
 from spending_optimiser.web import create_app
 
 # Load the standalone, documented preview entry point without a production dependency.
@@ -49,6 +50,20 @@ def forbid_native_store(monkeypatch):
 def post(client, path, **data):
     client.get("/")
     return client.post(path, data={"csrf": client.cookies["ledger_csrf"], **data})
+
+
+MONTH = calendar_month("2025-02")
+
+
+def load(client, app, action="continue"):
+    return post(
+        client,
+        "/gmail/month",
+        month=MONTH.key,
+        pages="1",
+        action=action,
+        connection_id=app.state.gmail.connection_id,
+    )
 
 
 def connect(client):
@@ -103,10 +118,8 @@ def test_mail_journey_readable_headers_limits_and_no_ledger_side_effects(tmp_pat
     response = connect(client)
     assert "alex.preview@example.invalid" in response.text
     assert "No mail fetched" in response.text
-    assert not app.state.gmail.candidates
-    response = post(
-        client, "/gmail/load", days="30", limit="5", connection_id=app.state.gmail.connection_id
-    )
+    assert app.state.gmail.saved_month(MONTH)[0] == {}
+    response = load(client, app)
     page = Page(response.text)
     assert len(page.attrs("details", **{"class": "mail-item"})) == 4
     assert (
@@ -115,20 +128,14 @@ def test_mail_journey_readable_headers_limits_and_no_ledger_side_effects(tmp_pat
     assert "01 Feb 2025" in response.text
     assert "Display truncated to 10,000 characters" in response.text
     assert not page.attrs("img") and not page.attrs("script")
-    assert page.attrs("input", name="limit", value="5")
-    assert page.attrs("option", value="30", selected=None)
+    assert page.attrs("input", name="month", value="2025-02")
     assert not app.state.ledger.load().transactions
-    assert (
-        "4 refreshed"
-        in post(
-            client, "/gmail/load", days="30", limit="5", connection_id=app.state.gmail.connection_id
-        ).text
-    )
+    assert "4 saved candidates" in load(client, app, action="refresh").text
     assert "alex.preview@example.invalid" in client.get("/").text
     response = post(client, "/gmail/disconnect")
     assert "disconnected locally" in response.text
     assert "alex.preview@example.invalid" not in response.text
-    assert not app.state.gmail.candidates
+    assert app.state.gmail.saved_month(MONTH) == ({}, None)
     assert "No saved connection" in post(client, "/gmail/restore").text
 
 
@@ -191,9 +198,7 @@ def test_mail_sender_is_decoded_unambiguous_and_marked_unverified(tmp_path, monk
     app = PREVIEW.preview_app(tmp_path)
     client = TestClient(app, base_url="http://127.0.0.1:8876")
     connect(client)
-    response = post(
-        client, "/gmail/load", days="30", limit="5", connection_id=app.state.gmail.connection_id
-    )
+    response = load(client, app)
     assert "Unverified sender: Unknown/ambiguous" in response.text
     assert "notifications@example.invalid&gt;Other claim" not in response.text
     assert "ambiguous_sender" in response.text
@@ -202,7 +207,7 @@ def test_mail_sender_is_decoded_unambiguous_and_marked_unverified(tmp_path, monk
 
 def test_rendered_errors_preserve_exception_headers(tmp_path):
     client = TestClient(create_app(tmp_path / "offline.sqlite3"), base_url="http://127.0.0.1:8876")
-    response = client.get("/gmail/load")
+    response = client.get("/gmail/month")
     assert response.status_code == 405
     assert response.headers["allow"] == "POST"
     assert Page(response.text).attrs("div", role="alert")

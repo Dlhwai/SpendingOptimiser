@@ -44,8 +44,9 @@ Repeated retrieval retains source identity even if content changes. Dedupe is by
 
 ### Pagination and failure contract
 
-`CandidatePage` provides `results`, `next_page_token`, `error`, `duplicate_count`,
-`candidate_count`, `successful`, and `exhausted`. Each `MessageResult` has a
+`CandidatePage` provides `results`, `next_page_token`, `error`, `duplicate_ids`
+(listed IDs skipped as already seen), `duplicate_count`, `candidate_count`,
+`successful`, and `exhausted`. Each `MessageResult` has a
 private `message_id`, either a `candidate` or an `error`. A successful empty page
 means **0 candidates on that page**, not necessarily end of pagination. Only
 `exhausted` indicates a successful terminal page. Gmail's result-size estimate
@@ -229,13 +230,17 @@ uv run --locked spending-optimiser
    Gmail message ID, never the thread or financial amount.
 4. Select a **calendar month**, then **View saved month** to read local data only.
    Choose **1-5 pages per action** (default 2, 20 IDs/page) and **Load month**.
-   The fixed query uses explicit UTC epoch boundaries, excluding spam/trash;
-   a local half-open receipt-time filter enforces the exact month. Duplicates
+   The fixed query uses explicit epoch boundaries for Singapore-time midnights
+   (UTC+08:00), excluding spam/trash; a local half-open Singapore receipt-time
+   filter enforces the exact month. Duplicates
    count toward the action bound. **Continue / retry month** resumes until the
    query is genuinely exhausted, including successful empty nonterminal pages.
    Partial failures retain successes and retry the same unadvanced page with
-   only successful IDs skipped. Errors and cycles stay incomplete, never empty
-   success. Refresh restarts an expired/cycled token. No automatic retries,
+   resolved IDs skipped. A proven per-message failure (`invalid_message` or
+   `response_too_large`) is retained as an unresolved ID so later pages still
+   load; **Retry failed messages** re-fetches only those IDs. Listing, network,
+   rate-limit and auth failures never advance. Errors, cycles and unresolved
+   messages stay incomplete, never empty or complete success. Refresh restarts an expired/cycled token. No automatic retries,
    whole-mailbox scans, scheduler or background polling exist. See [monthly.md](monthly.md).
 5. Candidate rows show sender, subject and Gmail receipt time. Expand a row to
    view the complete subject, unverified headers and escaped
@@ -248,10 +253,10 @@ uv run --locked spending-optimiser
    content versions are preserved. Continue until exhausted again; previous
    exhaustion is not current after refresh starts. Absent/deleted provider mail
    is not erased from saved data. This is not a snapshot or financial completeness
-   guarantee. The last query-action time and page/duplicate counts are visible.
+   guarantee. The last query-action time, completed-page/duplicate counts and
+   unresolved messages are visible. Retries do not inflate these counts.
 7. Under **Connection settings & privacy**, **Disconnect Gmail / forget saved
-   authorization** hides saved mail and clears the legacy in-memory batch,
-   cancels pending sign-ins and deletes this database's refresh authorization from
+   authorization** hides saved mail, cancels pending sign-ins and deletes this database's refresh authorization from
    the OS store. It is idempotent. If deletion fails, the UI is disconnected but
    explicitly reports that the saved credential could remain; unlock and retry.
    Client configuration stays for later connections. To revoke the grant at
@@ -270,12 +275,14 @@ without query parameters and with no-referrer. Access logging is disabled.
 Access/ID tokens live only in process memory. Refresh tokens and client secrets
 remain only in the native store under service `spending-optimiser.gmail`. The
 client entry is shared by this OS app; saved authorization is keyed by the
-absolute ledger-path digest. **Monthly mail and checkpoints now persist as private
-plaintext SQLite data**, scoped by stable Google identity, including source
-versions and successful-ID/page-token continuation. Additive mail tables do not
-rewrite existing ledger records or change ledger format 1. Protect disk/backups;
-there is no encryption at rest or retention/deletion UI. Disconnect does not
-remove the local cache or ledger history, only visible access and authorization.
+absolute ledger-path digest. **Monthly mail and checkpoints persist as readable
+SQLite data with no app-level encryption**, scoped by stable Google identity,
+including headers, message text, every retained content version, failed-message
+IDs and successful-ID/page-token continuation. Additive mail tables do not
+rewrite existing ledger records or change ledger format 1. Protect disk/backups.
+Saved mail is retained indefinitely; there is no retention, purge or deletion
+action. Disconnect does not remove the local cache or ledger history, only
+visible access and authorization.
 
 Restart hides mail and clears browser sessions, without accessing the credential
 store or network. Use **Restore saved connection** to read the native store and
@@ -283,9 +290,8 @@ view only that identity's saved mail (no network/mail retrieval yet). Loading th
 refreshes/verifies authorization. Revoked or expired refresh/API authentication
 hides mail and asks you to reconnect. Other API/permission/rate-limit failures are
 explicit, not empty success. Switching accounts hides the prior cache; stale
-account forms cannot load into a newly selected connection. The legacy bounded
-recent-load endpoint remains compatible with its separate temporary-batch view,
-but is not the primary path.
+account forms cannot load into a newly selected connection. Calendar-month loading
+is the only Gmail retrieval path.
 
 This remains a single-user, loopback-only local app. The OS user/other local
 software are trusted; memory, browser history, OS-store access and backups still
@@ -299,17 +305,17 @@ model, and there is no live AI integration.
 library exchange/refresh mechanics, the existing Gmail REST adapter and browser
 endpoints against fake HTTP and stores. Tests cover cancellation/failure,
 state/session/host/expiry/replay, nonce/scope rejection, secure-store errors,
-account switches/disconnect/restart, pagination/duplicates/range limits,
+account switches/disconnect/restart, pagination/duplicates/month and page limits,
 0/partial/API failures, escaped content and unchanged offline ledger data.
 The synthetic Chrome walkthrough uses an injected mock consent page and fake
 transport/store, not real Google sign-in or OS entries. Reproduce it with
 `uv run --locked python examples/ui_preview.py --port 8876`; see the README.
 The UI additionally tests navigation, configuration-required guidance, candidate
-headers/truncation, selected range/limit, offline imports and the review journey.
+headers/truncation, the selected month, offline imports and the review journey.
 
 **Still requires the user:** perform Cloud/client setup above, approve native
 credential-store access, complete explicit Google browser consent, verify one
-small recent-message load, refresh, restart/restore and disconnect with the real
+small month load, refresh, restart/restore and disconnect with the real
 account. Also verify month continuation and persisted saved mail after restore.
 No live-account smoke verification or qualified real-bank extraction is
 claimed. Keep any real mail/screenshots outside Git and chat. Missing credentials

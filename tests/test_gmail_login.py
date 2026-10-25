@@ -25,11 +25,13 @@ from spending_optimiser.gmail_auth import (
     configure_google,
 )
 from spending_optimiser.gmail_service import GmailService
+from spending_optimiser.monthly import calendar_month
 from spending_optimiser.web import create_app
 
 CLIENT_ID = "synthetic.apps.googleusercontent.com"
 CONFIG = json.dumps({"installed": {"client_id": CLIENT_ID, "client_secret": "fake-client-secret"}})
 CALLBACK = "http://127.0.0.1:8765/gmail/callback"
+MONTH = calendar_month("2025-02")
 
 
 class MemoryStore:
@@ -141,7 +143,7 @@ class SyntheticGoogle:
             raise ClientFailure(IngestionError(self.error))
         if parsed.path.endswith("/messages"):
             query = parse_qs(parsed.query)
-            assert query["q"][0] in {"newer_than:1d", "newer_than:7d", "newer_than:30d"}
+            assert query["q"][0] == MONTH.query
             result = self.pages[query.get("pageToken", [None])[0]]
             assert len(result.get("messages", [])) <= int(query["maxResults"][0])
             return result
@@ -222,8 +224,19 @@ def connect(env):
     return params
 
 
-def load(env, days="7", limit="20"):
-    return post(env, "/gmail/load", days=days, limit=limit, connection_id=env.service.connection_id)
+def load(env, pages="2", month="2025-02", action="refresh", connection_id=None):
+    return post(
+        env,
+        "/gmail/month",
+        month=month,
+        pages=pages,
+        action=action,
+        connection_id=connection_id or env.service.connection_id,
+    )
+
+
+def saved(service):
+    return service.saved_month(MONTH)[0]
 
 
 def test_oauth_real_library_flow_load_refresh_and_ledger_preserved(setup):
@@ -244,14 +257,14 @@ def test_oauth_real_library_flow_load_refresh_and_ledger_preserved(setup):
     assert exchanged["redirect_uri"] == CALLBACK
     assert len(env.google.calls) == 1 and env.google.calls[0].endswith("/profile")
     response = load(env)
-    assert "2 candidates loaded" in response.text and "2 duplicate IDs skipped" in response.text
+    assert "2 saved candidates" in response.text and "2 duplicate IDs skipped" in response.text
     assert "not validated financial facts" in response.text
     assert "&lt;script&gt;" in response.text and "<script>" not in response.text
     assert "<img src=x>" not in response.text
-    identities = [c.observation.observation_id for c in env.service.candidates.values()]
+    identities = [c.observation.observation_id for c in saved(env.service).values()]
     response = load(env)
-    assert "2 refreshed" in response.text
-    assert identities == [c.observation.observation_id for c in env.service.candidates.values()]
+    assert "2 saved candidates" in response.text and "Query exhausted" in response.text
+    assert identities == [c.observation.observation_id for c in saved(env.service).values()]
     env.service.connection.credentials.expiry = datetime.now(UTC).replace(tzinfo=None) - timedelta(
         days=1
     )
@@ -366,7 +379,7 @@ def test_secure_store_and_refresh_failures_are_redacted(setup, failure):
             env.google.fail_refresh = failure == "refresh"
             env.store.fail = "put" if failure == "refresh_store" else None
             response = load(env)
-    assert env.service.connection is None and not env.service.candidates
+    assert env.service.connection is None and not saved(env.service)
     assert (
         "no plaintext fallback" in response.text
         if failure != "refresh"
@@ -379,42 +392,43 @@ def test_account_isolation_disconnect_and_restart_restore(setup):
     env = setup
     connect(env)
     load(env)
-    identity_a = env.service.candidates["mail1"].observation.observation_id
+    identity_a = saved(env.service)["mail1"].observation.observation_id
     old_connection_id = env.service.connection_id
     params = begin(env)
-    assert env.service.connection is None and not env.service.candidates
+    assert env.service.connection is None and not saved(env.service)
     env.google.subject, env.google.email = "synthetic-account-B", "synthetic-b@example.invalid"
     env.client.get("/gmail/callback", params={"state": params["state"][0], "code": "fake"})
-    response = post(env, "/gmail/load", days="7", limit="20", connection_id=old_connection_id)
-    assert "Reconnect Gmail" in response.text and not env.service.candidates
+    response = load(env, connection_id=old_connection_id)
+    assert "Reconnect Gmail" in response.text and not saved(env.service)
     load(env)
-    assert env.service.candidates["mail1"].observation.observation_id != identity_a
+    assert saved(env.service)["mail1"].observation.observation_id != identity_a
     fresh = GmailService(env.path, store=env.store, oauth=env.google.oauth())
-    assert fresh.connection is None and not fresh.candidates
+    assert fresh.connection is None and not saved(fresh)
     fresh.restore()
-    assert fresh.connection.subject == env.google.subject and not fresh.candidates
+    assert fresh.connection.subject == env.google.subject
+    assert set(saved(fresh)) == {"mail1", "mail2"}  # saved history is retained across restart
     post(env, "/gmail/disconnect")
     assert env.service.key not in env.store.values and "desktop-client" in env.store.values
-    assert not env.service.pending and not env.service.candidates
+    assert not env.service.pending and not saved(env.service)
     post(env, "/gmail/disconnect")  # idempotent
     assert "disconnected locally" in env.client.get("/gmail").text
 
 
 @pytest.mark.parametrize(
-    "days,limit",
+    "month,pages,action",
     [
-        ("0", "20"),
-        ("31", "20"),
-        ("7", "0"),
-        ("7", "101"),
-        ("newer_than:1d OR in:anywhere", "20"),
-        ("7", "no"),
+        ("2025-02", "0", "refresh"),
+        ("2025-02", "6", "refresh"),
+        ("2025-02", "no", "refresh"),
+        ("2025-02", "1", "delete"),
+        ("2025-2", "1", "refresh"),
+        ("after:0 OR in:anywhere", "1", "refresh"),
     ],
 )
-def test_query_and_message_limits(setup, days, limit):
+def test_query_and_message_limits(setup, month, pages, action):
     connect(setup)
     count = len(setup.google.calls)
-    assert load(setup, days, limit).status_code == 422
+    assert load(setup, pages, month, action).status_code == 422
     assert len(setup.google.calls) == count
 
 
@@ -422,13 +436,13 @@ def test_zero_partial_errors_limits_cycles_and_safe_html(setup):
     env = setup
     connect(env)
     env.google.pages = {None: {}}
-    assert "0 candidates loaded" in load(env).text
+    assert "0 saved candidates" in load(env).text
     env.google.pages = {None: {"messages": [{"id": "mail1"}, {"id": "mail2"}]}}
     env.google.message_error = "mail2"
     response = load(env)
     assert (
-        "1 candidates loaded" in response.text
-        and "Partial/failed load: message_not_found" in response.text
+        "1 saved candidates" in response.text
+        and "Partial / failed retrieval: message_not_found" in response.text
     )
     env.google.message_error = None
     env.google.html = True
@@ -439,13 +453,13 @@ def test_zero_partial_errors_limits_cycles_and_safe_html(setup):
     assert "Untrusted mail" in response.text and "tracking.invalid" not in response.text
     assert "execute()" not in response.text
     env.google.pages = {None: {"messages": [{"id": "mail1"}], "nextPageToken": "more"}}
-    assert "Loading limit reached" in load(env, limit="1").text
+    assert "Incomplete month" in load(env, pages="1").text
     env.google.pages = {
         None: {"nextPageToken": "a"},
         "a": {"nextPageToken": "b"},
         "b": {"nextPageToken": "a"},
     }
-    assert "invalid_response" in load(env).text
+    assert "pagination_cycle" in load(env, pages="5").text
     env.google.pages = {
         None: {"nextPageToken": "a"},
         "a": {"nextPageToken": "b"},
@@ -454,17 +468,17 @@ def test_zero_partial_errors_limits_cycles_and_safe_html(setup):
         "d": {"nextPageToken": "e"},
     }
     before = len(env.google.calls)
-    assert "Loading limit reached" in load(env, limit="100").text
+    assert "Incomplete month" in load(env, pages="5").text
     assert len(env.google.calls) - before == 5
     for code in ("rate_limited", "permission_denied", "transport_failed", "api_error"):
         env.google.error = code
         assert code in load(env).text
     env.google.error = "authentication_failed"
-    assert "Reconnect Gmail" in load(env).text and not env.service.candidates
+    assert "Reconnect Gmail" in load(env).text and not saved(env.service)
 
 
 @pytest.mark.parametrize(
-    "path", ["/gmail/connect", "/gmail/load", "/gmail/restore", "/gmail/disconnect"]
+    "path", ["/gmail/connect", "/gmail/month", "/gmail/restore", "/gmail/disconnect"]
 )
 def test_gmail_mutations_keep_host_origin_csrf_protection(setup, path):
     env = setup

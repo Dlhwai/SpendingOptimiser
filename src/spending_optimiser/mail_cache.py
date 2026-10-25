@@ -11,6 +11,21 @@ from .ledger import Ledger
 CANDIDATE = TypeAdapter(Candidate)
 
 
+def fresh_state():
+    return {
+        "started": False,
+        "exhausted": False,
+        "token": None,
+        "tokens": [],
+        "seen": [],
+        "failed": {},
+        "retry": [],
+        "pages": 0,
+        "duplicates": 0,
+        "errors": [],
+    }
+
+
 class MailCache:
     def __init__(self, database):
         self.ledger = Ledger(database)
@@ -36,20 +51,7 @@ class MailCache:
                 "SELECT payload FROM mail_scans WHERE namespace=? AND month=?",
                 (namespace, month.key),
             ).fetchone()
-        return (
-            json.loads(row[0])
-            if row
-            else {
-                "started": False,
-                "exhausted": False,
-                "token": None,
-                "tokens": [],
-                "seen": [],
-                "pages": 0,
-                "duplicates": 0,
-                "errors": [],
-            }
-        )
+        return {**fresh_state(), **json.loads(row[0])} if row else fresh_state()
 
     def save(self, namespace, month, state, candidates):
         with self.ledger.connection() as db:
@@ -100,5 +102,5 @@ class MailCache:
         return {
             identity: candidate
             for identity, candidate in latest.items()
-            if month.start <= candidate.gmail_internal_at.date() < month.end
+            if month.contains(candidate.gmail_internal_at)
         }
