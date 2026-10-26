@@ -436,3 +436,19 @@ def test_an_app_without_its_source_root_refuses_instead_of_writing_elsewhere(
         "site-packages",
         "site-packages/spending_optimiser",
     ]
+
+
+def test_google_client_downloads_are_ignored_by_git_but_examples_are_not(application):
+    subprocess.run(["git", "init", "-q", str(application)], check=True)
+    download = "client_secret_000-synthetic.apps.googleusercontent.com.json"
+    for name in (download, ".env.example", "pyproject.toml"):
+        (application / name).write_text("{}" if name == download else "")
+    status = subprocess.run(
+        ["git", "-C", str(application), "status", "--porcelain", "--untracked-files=all"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    untracked = {line[3:] for line in status.splitlines()}
+    assert download not in untracked
+    assert {".env.example", "pyproject.toml", ".gitignore"} <= untracked

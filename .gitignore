@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 credentials.json
+client_secret_*.json
 token.json
 
 # Python tooling
