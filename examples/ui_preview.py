@@ -15,8 +15,9 @@ from google.oauth2.credentials import Credentials
 
 from spending_optimiser.ai_inputs import MARKER, stated_amounts
 from spending_optimiser.ai_service import AIService
+from spending_optimiser.dotenv_store import DotenvFile
 from spending_optimiser.gmail import GmailRestClient
-from spending_optimiser.gmail_auth import GmailProblem, GoogleConnection, configure_google
+from spending_optimiser.gmail_auth import EnvStore, GmailProblem, GoogleConnection, configure_google
 from spending_optimiser.gmail_service import GmailService
 from spending_optimiser.ledger import Ledger
 from spending_optimiser.web import create_app
@@ -69,11 +70,15 @@ PREVIEW_ROLES = (
 class PreviewAIClient:
     """Fake cached subscription and model transport. No native client or model calls."""
 
-    def __init__(self, binary, home):
-        self.account_value = {"email": "ai.preview@example.invalid", "plan": "plus"}
+    def __init__(self, binary, home, signed_in=True):
+        self.account_value = (
+            {"email": "ai.preview@example.invalid", "plan": "plus"} if signed_in else None
+        )
         self.inputs = []
         self.output = None
         self.started = self.closed = False
+        self.login_outcome = None
+        self.cancelled = False
 
     def start(self):
         self.started = True
@@ -83,6 +88,12 @@ class PreviewAIClient:
 
     def login(self):
         return "/preview-ai-consent"
+
+    def login_finished(self):
+        return self.login_outcome
+
+    def cancel_login(self):
+        self.cancelled = True
 
     def analyse(self, text, schema):
         self.inputs.append(text)
@@ -123,20 +134,6 @@ class PreviewAIClient:
 
     def close(self):
         self.closed = True
-
-
-class MemoryStore:
-    def __init__(self):
-        self.values = {}
-
-    def get(self, key):
-        return self.values.get(key)
-
-    def put(self, key, value):
-        self.values[key] = value
-
-    def delete(self, key):
-        self.values.pop(key, None)
 
 
 class PreviewOAuth:
@@ -208,10 +205,10 @@ class PreviewTransport:
         }
 
 
-def preview_app(directory, *, configured=True, populated=False):
-    """All authorization, credentials and message transport are injected fakes."""
+def preview_app(directory, *, configured=True, populated=False, ai_signed_in=True):
+    """All authorization and message transport are injected fakes; settings use a temp .env."""
     path = Path(directory) / "synthetic.sqlite3"
-    store = MemoryStore()
+    store = EnvStore(DotenvFile(Path(directory) / ".env"))
     if configured:
         configure_google(
             store,
@@ -233,7 +230,7 @@ def preview_app(directory, *, configured=True, populated=False):
     ai = AIService(
         Ledger(path),
         binary="synthetic-client-only",
-        client_factory=PreviewAIClient,
+        client_factory=lambda binary, home: PreviewAIClient(binary, home, ai_signed_in),
         transport=PreviewPublicTransport(),
     )
     app = create_app(path, gmail_service=service, ai_service=ai)
@@ -262,6 +259,33 @@ def preview_app(directory, *, configured=True, populated=False):
             "</body></html>"
         )
 
+    def synthetic_page(title, body):
+        return HTMLResponse(
+            '<!doctype html><html lang="en"><title>Synthetic ChatGPT consent</title>'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<body style="font:18px system-ui;max-width:600px;margin:60px auto;padding:24px">'
+            f"<h1>{title}</h1>{body}</body></html>"
+        )
+
+    @app.get("/preview-ai-consent", response_class=HTMLResponse)
+    def ai_consent():
+        # In the real flow the official client's own callback server completes this step.
+        return synthetic_page(
+            "Synthetic ChatGPT consent only",
+            "<p>This is not OpenAI sign-in. No network or native credential is used.</p>"
+            '<p><a href="/preview-ai-consent/approve">Approve synthetic sign-in</a></p>'
+            '<p><a href="/preview-ai-consent/deny">Deny synthetic sign-in</a></p>',
+        )
+
+    @app.get("/preview-ai-consent/{decision}", response_class=HTMLResponse)
+    def ai_decision(decision: str):
+        client = app.state.ai.client
+        if client is not None and decision in {"approve", "deny"}:
+            if decision == "approve":
+                client.account_value = {"email": "fresh.preview@example.invalid", "plan": "plus"}
+            client.login_outcome = decision == "approve"
+        return synthetic_page("Synthetic sign-in finished", "<p>You can close this window.</p>")
+
     return app
 
 
@@ -270,11 +294,17 @@ def main():
     parser.add_argument("--port", type=int, default=8876)
     parser.add_argument("--unconfigured", action="store_true")
     parser.add_argument("--populated", action="store_true")
+    parser.add_argument("--ai-signed-out", action="store_true")
     args = parser.parse_args()
     if args.port == 8765 or not 1024 <= args.port <= 65535:
         parser.error("Use a separate loopback port from 1024-65535, never 8765")
     with tempfile.TemporaryDirectory(prefix="spending-ui-preview-") as directory:
-        app = preview_app(directory, configured=not args.unconfigured, populated=args.populated)
+        app = preview_app(
+            directory,
+            configured=not args.unconfigured,
+            populated=args.populated,
+            ai_signed_in=not args.ai_signed_out,
+        )
         print(f"Synthetic preview: http://127.0.0.1:{args.port}; disposable database: {directory}")
         uvicorn.run(app, host="127.0.0.1", port=args.port, access_log=False, proxy_headers=False)
 

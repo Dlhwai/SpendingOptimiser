@@ -27,7 +27,6 @@ def isolated(monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("Synthetic dependencies only")
 
-    monkeypatch.setattr("spending_optimiser.gmail_auth.NativeStore._backend", forbidden)
     monkeypatch.setattr("urllib.request.OpenerDirector.open", forbidden)
     monkeypatch.setattr("requests.sessions.Session.request", forbidden)
 
@@ -609,7 +608,7 @@ def test_real_desktop_routes_restore_protections_and_inert_mail(tmp_path):
     assert (
         "1 compressed mail versions" in page.text and "No application-level encryption" in page.text
     )
-    mail = client.get("/gmail?month=2025-02").text
+    mail = client.get("/saved?month=2025-02").text
     assert "1 older mail versions are compressed" in mail
     assert "&lt;script&gt;inert&lt;/script&gt;" in mail and "<script>" not in mail
     assert client.post("/storage/compress", data={"csrf": ""}).status_code == 403

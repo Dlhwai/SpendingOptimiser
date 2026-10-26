@@ -83,8 +83,8 @@ enabled = false
 
 MESSAGES = {
     "not_configured": (
-        "Codex is not configured. Install the supported official client locally and supply "
-        "--codex-client. No API key is accepted."
+        "Codex is not configured. Install the supported official client locally and set "
+        "SPENDING_CODEX_CLIENT in .env or pass --codex-client. No API key is accepted."
     ),
     "unsupported_client": (
         "Requires the unmodified official Codex 0.164.0 macOS Apple Silicon binary. "
@@ -122,6 +122,9 @@ MESSAGES = {
     "consent_required": (
         "Preview the saved input and explicitly confirm this analysis. Nothing was sent."
     ),
+    "login_failed": "ChatGPT sign-in did not complete. Connect again.",
+    "cancelled": "Sign-in cancelled.",
+    "expired": "Sign-in expired. Connect again.",
 }
 
 
@@ -201,6 +204,7 @@ class CodexClient:
         self.buffer = b""
         self.pending = []
         self.counter = 0
+        self.login_id = None
 
     def start(self):
         if platform.system() != "Darwin" or platform.machine() != "arm64":
@@ -361,6 +365,8 @@ class CodexClient:
     def login(self):
         result = self.request("account/login/start", {"type": "chatgpt"})
         url = result.get("authUrl", "")
+        login_id = result.get("loginId")
+        self.login_id = login_id if isinstance(login_id, str) and len(login_id) <= 256 else None
         try:
             parsed = urlsplit(url)
             if (
@@ -375,6 +381,22 @@ class CodexClient:
         except (ValueError, TypeError):
             raise AIProblem("connection_failed") from None
         return url
+
+    def login_finished(self):
+        """The official client's own verdict on the sign-in, or None while it is unknown."""
+        outcome = None
+        for event in self.pending:
+            params = event.get("params")
+            if event.get("method") == "account/login/completed" and isinstance(params, dict):
+                if self.login_id is None or params.get("loginId") in {None, self.login_id}:
+                    outcome = params.get("success") is True
+        self.pending = []  # Nothing else is in flight while a sign-in is awaited.
+        return outcome
+
+    def cancel_login(self):
+        if self.login_id is not None:
+            login_id, self.login_id = self.login_id, None
+            self.request("account/login/cancel", {"loginId": login_id})
 
     def analyse(self, text, schema):
         self.preflight()

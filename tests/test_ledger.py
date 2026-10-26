@@ -528,6 +528,7 @@ def test_cli_loopback_and_configuration(tmp_path, monkeypatch):
     monkeypatch.setattr(web.uvicorn, "run", lambda app, **kw: calls.append((app, kw)))
     database = tmp_path / "env.sqlite3"
     monkeypatch.setenv("SPENDING_OPTIMISER_DB", str(database))
+    monkeypatch.setenv("SPENDING_OPTIMISER_ENV", str(tmp_path / "app.env"))
     monkeypatch.setattr("sys.argv", ["spending-optimiser", "--port", "8766"])
     web.main()
     assert calls[-1][0].state.ledger.path == database.resolve()

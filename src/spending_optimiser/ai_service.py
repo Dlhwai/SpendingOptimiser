@@ -4,6 +4,7 @@ import hashlib
 import json
 import secrets
 import threading
+import time
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -26,9 +27,15 @@ from .transactions import EventOrigin, Transaction
 
 
 class AIService:
-    def __init__(self, ledger, *, binary=None, client_factory=CodexClient, transport=https_get):
+    def __init__(
+        self, ledger, *, binary=None, client_factory=CodexClient, transport=https_get, clock=None
+    ):
         self.ledger, self.binary, self.client_factory = ledger, binary, client_factory
         self.transport, self.import_result = transport, None
+        self.clock = clock if clock is not None else time.monotonic
+        # Sign-in progress for the browser: `attempt` changes on every Connect request.
+        self.attempt = self.busy = 0
+        self.login_expires = None
         namespace = hashlib.sha256(str(ledger.path).encode()).hexdigest()[:24]
         self.home = ledger.path.parent / (".spending-codex-" + namespace)
         self.client = self.connection = self.authorization_url = self.problem = None
@@ -65,20 +72,39 @@ class AIService:
             self.connection_id = secrets.token_urlsafe(24)
 
     def connect(self):
-        with self.lock:
+        self.attempt += 1
+        self.busy += 1
+        try:
+            with self.lock:
+                self._connect()
+        except (OSError, AIProblem) as exc:
+            # Recorded before the attempt stops counting as busy, so a poll sees the failure.
+            self.problem = exc.code if isinstance(exc, AIProblem) else "connection_failed"
+            raise
+        finally:
+            self.busy -= 1
+
+    def _connect(self):
+        self.close()
+        if not self.configured:
+            raise AIProblem("not_configured")
+        self.client = self.client_factory(self.binary, self.home)
+        try:
+            self.client.start()
+            self.connection = self.client.account()
+            if self.connection is None:
+                self.authorization_url = self.client.login()
+                self.login_expires = self.clock() + 600
+            self.problem = None
+        except (OSError, AIProblem):
             self.close()
-            if not self.configured:
-                raise AIProblem("not_configured")
-            self.client = self.client_factory(self.binary, self.home)
-            try:
-                self.client.start()
-                self.connection = self.client.account()
-                if self.connection is None:
-                    self.authorization_url = self.client.login()
-                self.problem = None
-            except (OSError, AIProblem):
-                self.close()
-                raise
+            raise
+
+    def adopt(self, account):
+        self.connection = account
+        self.authorization_url = None
+        self.connection_id = secrets.token_urlsafe(24)
+        self.problem = None
 
     def confirm(self):
         with self.lock:
@@ -87,10 +113,48 @@ class AIService:
             account = self.client.account()
             if account is None:
                 raise AIProblem("subscription_required")
-            self.connection = account
-            self.authorization_url = None
-            self.connection_id = secrets.token_urlsafe(24)
-            self.problem = None
+            self.adopt(account)
+
+    def poll(self):
+        """Ask the official client whether sign-in finished. Never raises, never calls a model."""
+        if not self.lock.acquire(blocking=False):
+            return
+        try:
+            if self.client is None or self.authorization_url is None:
+                return
+            try:
+                if self.clock() >= self.login_expires:
+                    self.close()
+                    self.problem = "expired"
+                    return
+                account = self.client.account()
+                if account is not None:
+                    self.adopt(account)
+                elif self.client.login_finished() is False:
+                    self.close()
+                    self.problem = "login_failed"
+            except (OSError, AIProblem) as exc:
+                self.close()
+                self.problem = exc.code if isinstance(exc, AIProblem) else "connection_failed"
+        finally:
+            self.lock.release()
+
+    def cancel(self):
+        with self.lock:
+            if self.client is None or self.authorization_url is None:
+                return
+            try:
+                self.client.cancel_login()
+            except (OSError, AIProblem):
+                pass  # Closing the official client below ends the pending sign-in anyway.
+            self.close()
+            self.problem = "cancelled"
+
+    def status(self):
+        waiting = bool(self.busy) or (
+            self.authorization_url is not None and self.connection is None
+        )
+        return {"attempt": self.attempt, "state": "pending" if waiting else "idle"}
 
     def disconnect(self):
         with self.lock:

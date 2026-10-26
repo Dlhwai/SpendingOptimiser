@@ -20,7 +20,6 @@ def synthetic_dependencies_only(monkeypatch):
 
     for target in (
         "subprocess.Popen",
-        "spending_optimiser.gmail_auth.NativeStore._backend",
         "urllib.request.OpenerDirector.open",
         "requests.sessions.Session.request",
     ):

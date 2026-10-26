@@ -10,7 +10,6 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from fastapi.testclient import TestClient
 
-from spending_optimiser.gmail_auth import NativeStore
 from spending_optimiser.monthly import calendar_month
 from spending_optimiser.storage import Storage
 from spending_optimiser.web import create_app
@@ -40,14 +39,6 @@ class Page(HTMLParser):
             for t, a in self.elements
             if t == tag and all(k in a and a[k] == v for k, v in attrs.items())
         ]
-
-
-@pytest.fixture(autouse=True)
-def forbid_native_store(monkeypatch):
-    def forbidden(*args):
-        raise AssertionError("The UI must not inspect native credentials on page views")
-
-    monkeypatch.setattr(NativeStore, "_backend", forbidden)
 
 
 def post(client, path, **data):
@@ -92,25 +83,31 @@ def test_first_run_navigation_is_useful_offline_and_never_reads_credentials(tmp_
         assert response.status_code == 200
         assert len(page.attrs("h1")) == 1
         assert page.attrs("a", href=path, **{"aria-current": "page"})
-        assert not any(page.attrs(tag) for tag in ("script", "iframe", "img", "link"))
-        assert "default-src 'none'" in response.headers["content-security-policy"]
+        assert not any(page.attrs(tag) for tag in ("iframe", "img", "link"))
+        # Only the sign-in page carries the one same-origin script; no inline script anywhere.
+        expected = [{"src": "/static/provider-connect.js"}] if path == "/gmail" else []
+        assert page.attrs("script") == expected
+        policy = response.headers["content-security-policy"]
+        assert "default-src 'none'" in policy and "script-src 'self'" in policy
+        assert "unsafe-inline" not in policy.split("style-src")[0]
+        assert response.headers["cross-origin-opener-policy"] == "same-origin"
     assert "0 results" in client.get("/ledger").text
     imports = Page(client.get("/imports").text)
     assert {f["action"] for f in imports.attrs("form")} == {"/import", "/example"}
 
 
-def test_configuration_required_opens_actionable_setup_and_preserves_offline_use(tmp_path):
+def test_missing_google_client_is_reported_honestly_and_preserves_offline_use(tmp_path):
     app = PREVIEW.preview_app(tmp_path, configured=False)
     client = TestClient(app, base_url="http://127.0.0.1:8876")
     response = post(client, "/gmail/connect")
     page = Page(response.text)
     assert response.status_code == 200
     assert page.attrs("div", role="alert")
-    assert page.attrs("details", open=None)
     assert "Google client not configured" in response.text
-    assert "--configure-google &lt; /absolute/private/path/client.json" in response.text
-    assert "Check setup &amp; connect Gmail" in response.text
+    assert "SPENDING_GOOGLE_CLIENT_ID" in response.text
+    assert "SPENDING_GOOGLE_CLIENT_SECRET" in response.text
     assert not page.attrs("input", type="password")
+    assert not app.state.gmail.pending
     assert "11 new records" in post(client, "/example").text
     assert len(app.state.ledger.load().transactions) == 1
 
@@ -120,23 +117,23 @@ def test_mail_journey_readable_headers_limits_and_no_ledger_side_effects(tmp_pat
     client = TestClient(app, base_url="http://127.0.0.1:8876")
     response = connect(client)
     assert "alex.preview@example.invalid" in response.text
-    assert "No mail fetched" in response.text
     assert app.state.gmail.saved_month(MONTH)[0] == {}
-    response = load(client, app)
+    load(client, app)
+    response = client.get("/saved?month=2025-02")
     page = Page(response.text)
     assert len(page.attrs("details", **{"class": "mail-item"})) == 4
     assert (
         "Unverified sender: Orchard Preview &lt;notifications@example.invalid&gt;" in response.text
     )
     assert "01 Feb 2025" in response.text
-    assert "Display truncated to 10,000 characters" in response.text
+    assert "Display truncated to 10,000 of" in response.text
     assert not page.attrs("img") and not page.attrs("script")
     assert page.attrs("input", name="month", value="2025-02")
     assert not app.state.ledger.load().transactions
     assert "4 saved candidates" in load(client, app, action="refresh").text
     assert "alex.preview@example.invalid" in client.get("/").text
     response = post(client, "/gmail/disconnect")
-    assert "disconnected locally" in response.text
+    assert "Gmail disconnected" in response.text
     assert "alex.preview@example.invalid" not in response.text
     assert app.state.gmail.saved_month(MONTH) == ({}, None)
     assert "No saved connection" in post(client, "/gmail/restore").text
@@ -201,7 +198,8 @@ def test_mail_sender_is_decoded_unambiguous_and_marked_unverified(tmp_path, monk
     app = PREVIEW.preview_app(tmp_path)
     client = TestClient(app, base_url="http://127.0.0.1:8876")
     connect(client)
-    response = load(client, app)
+    load(client, app)
+    response = client.get("/saved?month=2025-02")
     assert "Unverified sender: Unknown/ambiguous" in response.text
     assert "notifications@example.invalid&gt;Other claim" not in response.text
     assert "ambiguous_sender" in response.text

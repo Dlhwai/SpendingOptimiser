@@ -44,7 +44,7 @@ material, credentials, screenshots containing financial data, or exports.
 
 ## Complete synthetic browser workflow
 
-1. From the **Overview**, open **Import data** and click **Import bundled synthetic
+1. From **Inspect saved data**, open the **Import data** tab and click **Import bundled synthetic
    example**. This imports the exact synthetic schema fixture bundled with the package. Alternatively, upload
    `tests/fixtures/synthetic.json` using **Import a schema document**. Both paths
    run the same validation and persistence code. Paste JSON or upload a file, not
@@ -87,22 +87,28 @@ cannot be referenced by public records under the existing schema validation.
 
 ## Workspace navigation
 
-- **Overview**: calendar-month canonical transactions, decision counts, separate
-  currency/kind magnitudes, purchase grouping and daily charts, with exclusions.
-  All data comes from saved records, never page-triggered retrieval or AI.
-- **Mail inbox**: one-time setup guidance, Connect/Restore, explicit bounded month
-  Load/Continue/Refresh, persistent account-scoped candidates and retrieval state.
-  Mail stays separate from ledger events. See [monthly workflow](monthly.md).
-- **Transactions**: all canonical ledger events, including accepted/rejected ones.
-  Open an event for facts, source evidence, review/correction and immutable history.
-- **Review queue**: events needing a decision. Reviewer, reason and action are
-  primary; complete Fact JSON correction is available in an optional disclosure.
-- **Import data** and **Card evidence**: advanced snapshot import and public
-  reference data, separate from the main onboarding journey.
+The sidebar has exactly three steps; related views are tabs on their step.
+
+1. **Connect Gmail**: Connect/Restore/Disconnect through a sign-in window, and
+   explicit bounded month Load/Continue/Refresh with account-scoped retrieval state.
+   See [monthly workflow](monthly.md).
+2. **Inspect saved data**, with tabs:
+   - **Saved mail**: persistent candidates, separate from ledger events.
+   - **Transactions**: all canonical ledger events, including accepted/rejected ones.
+     Open an event for facts, source evidence, review/correction and immutable history.
+   - **Review queue**: events needing a decision. Reviewer, reason and action are
+     primary; complete Fact JSON correction is available in an optional disclosure.
+   - **Card evidence**, **Import data** and **Storage**: public reference data,
+     advanced snapshot import, and compression/restoration of older detail.
+3. **Understand this month**, with tabs **This month** (calendar-month canonical
+   transactions, decision counts, separate currency/kind magnitudes, purchase grouping
+   and daily charts, with exclusions) and **Safe AI analysis**. All data comes from
+   saved records, never page-triggered retrieval or AI.
 
 The interface uses local system fonts, server-rendered semantic forms, visible
-keyboard focus and responsive layouts without scripts, remote assets or a frontend
-build. See the README's disposable synthetic preview for safe UI exploration.
+keyboard focus and responsive layouts, with no remote assets or frontend build. Its one
+script is the same-origin sign-in window helper on the Connect pages. See the README's
+disposable synthetic preview for safe UI exploration.
 
 ## Persistence and review contract
 
@@ -166,7 +172,7 @@ never receives imported private data. Tests and smoke validation use synthetic m
 
 There is no multi-user login, application-level encryption at rest, deletion UI,
 automatic backups, ledger-table pagination, or production hosting support.
-See [Storage & archives](storage.md) for compression, saved-month restoration,
+See [Storage](storage.md) for compression, saved-month restoration,
 database migration and post-write maintenance. Do not expose the service through
 a proxy, LAN bind, or tunnel; the local OS user and other software on the machine
 remain trusted. All database readers

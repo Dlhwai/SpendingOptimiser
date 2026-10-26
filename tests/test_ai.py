@@ -30,7 +30,6 @@ from spending_optimiser.ai_inputs import (
 from spending_optimiser.ai_service import AIService
 from spending_optimiser.codex_client import CONFIG, AIProblem, CodexClient, configuration_safe
 from spending_optimiser.gmail import Candidate
-from spending_optimiser.gmail_auth import NativeStore
 from spending_optimiser.ledger import Conflict, Ledger, canonical
 from spending_optimiser.monthly import calendar_month
 from spending_optimiser.public_terms import (
@@ -56,7 +55,6 @@ def no_real_transports(monkeypatch):
         raise AssertionError("No real native client, credentials or provider calls in tests")
 
     monkeypatch.setattr(subprocess, "Popen", forbidden)
-    monkeypatch.setattr(NativeStore, "_backend", forbidden)
 
 
 @pytest.fixture
@@ -286,7 +284,6 @@ def test_default_disconnected_and_connection_failures_are_honest(tmp_path):
     response = post(client, "/ai/connect")
     assert "Codex is not configured" in response.text
     assert app.state.ai.client is None
-    assert "Claude: unavailable" in response.text and "Gemini: unavailable" in response.text
     assert "0 results" in response.text
 
 
@@ -888,8 +885,8 @@ def test_new_format_accepted_layout_parses_matching_candidates_without_ai(app, c
     )
     assert loaded.status_code == 200
     assert len(gmail.saved_month(month)[0]) == 4
-    page = client.get("/gmail?month=2025-02").text
-    assert page.count("Accepted format layout matched") == 4
+    page = client.get("/saved?month=2025-02").text
+    assert page.count("Matched accepted layout") == 4
     assert "SGD 1234 minor units" in page
     assert len(ai.client.inputs) == 1
     assert not app.state.ledger.load().transactions
@@ -904,13 +901,10 @@ def test_new_format_accepted_layout_parses_matching_candidates_without_ai(app, c
     )
     gmail.cache.save(gmail.namespace, month, gmail.saved_month(month)[1], [zero])
     assert len(gmail.saved_month(month)[0]) == 5
-    response = client.get("/gmail?month=2025-02")
+    response = client.get("/saved?month=2025-02")
     assert response.status_code == 200
-    assert response.text.count("Accepted format layout matched") == 4
-    overview = client.get("/?month=2025-02")
-    assert overview.status_code == 200
-    assert "Accepted layouts produce local, unsaved Mail proposals only" in overview.text
-    assert "no private mail is sent to a model" in overview.text
+    assert response.text.count("Matched accepted layout") == 4
+    assert client.get("/?month=2025-02").status_code == 200
     assert len(ai.client.inputs) == 1
     assert not app.state.ledger.load().transactions
 
@@ -1020,7 +1014,7 @@ def test_failed_analysis_disconnects_visibly_and_reconnect_retries_safely(app, c
     monkeypatch.setattr(transport, "analyse", failed)
     response = analyse_form(client, ai, identity)
     assert "Analysis failed" in response.text and "AI disconnected" in response.text
-    assert "ChatGPT session connected" not in response.text
+    assert "ChatGPT connected" not in response.text
     assert transport.closed and ai.client is None and ai.connection is None
     response = post(
         client,
@@ -1031,7 +1025,7 @@ def test_failed_analysis_disconnects_visibly_and_reconnect_retries_safely(app, c
         consent="analyse-safe-snapshot",
     )
     assert "Nothing was sent" in response.text
-    assert "ChatGPT session connected" in post(client, "/ai/connect").text
+    assert "ChatGPT connected" in post(client, "/ai/connect").text
     assert "Review safe AI proposal" in analyse_form(client, ai, identity).text
     assert len(ai.proposals()) == 1
 
@@ -1044,7 +1038,7 @@ def test_stale_and_unsupported_snapshots_are_listed_but_refused_for_use(app, cli
     current = capture(ai, dbs_site(PREVIEW.PUBLIC_QUOTE.replace("S$800", "S$1,000")))
     response = client.get("/ai")
     assert response.status_code == 200
-    assert "Stale" in response.text and "Unsupported saved snapshot" in response.text
+    assert "Stale" in response.text and "Unsupported snapshot" in response.text
     assert "SECRET" not in response.text
     assert [item["status"] for item in ai.snapshots()] == ["current", "unsupported", "stale"]
     assert client.get(f"/ai?snapshot={identity}").status_code == 422
@@ -1205,7 +1199,8 @@ def test_new_consent_and_explicit_confirmation_are_separate(app, client):
 
     app.state.ai.client_factory = fresh
     response = post(client, "/ai/connect")
-    assert "Continue to official ChatGPT consent" in response.text
+    assert "Continue to ChatGPT" in response.text
+    assert app.state.ai.authorization_url == "/preview-ai-consent"
     assert app.state.ai.connection is None
     assert app.state.ai.client.inputs == []
     app.state.ai.client.account_value = {"email": "fresh@example.invalid", "plan": "plus"}

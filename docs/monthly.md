@@ -8,13 +8,14 @@ background sync or customizable dashboard configuration. An optional
 subscription for official public terms and placeholder structures only.
 
 1. Start `uv run --locked spending-optimiser` and open http://127.0.0.1:8765.
-2. Open **Mail inbox**, complete the [one-time Gmail setup](gmail.md), then Connect
-   Gmail. Google consent and native credential access are user-performed. No mail
-   is fetched during sign-in or startup. Restore the saved connection after restart.
-3. Select a calendar month and **View saved month**. This GET only reads SQLite.
+2. Open **Connect Gmail** (step 1), complete the [one-time Gmail setup](gmail.md),
+   then Connect Gmail. Google consent is user-performed in the sign-in window the
+   app opens. No mail is fetched during sign-in or startup. Restore the saved
+   connection after restart.
+3. Select a calendar month and **View month**. This GET only reads SQLite.
    **Load month** explicitly downloads up to the selected 1-5 pages of 20 IDs.
    Default: 2 pages. Duplicate IDs count toward that per-action bound.
-4. Use **Continue / retry month** until **Query exhausted**. A successful empty
+4. Use **Continue month** until **Query exhausted**. A successful empty
    nonterminal page remains incomplete. Successful candidates survive failures;
    retry replays the unadvanced page, skipping resolved IDs. Listing, network,
    rate-limit and authentication failures never advance the page. A message that
@@ -29,7 +30,7 @@ subscription for official public terms and placeholder structures only.
    are explicit. **Refresh month**
    restarts the query while preserving/deduplicating saved data. There are no
    automatic retries, mailbox backfills, watch/history sync or schedules.
-5. Inspect escaped saved candidate text. These are raw candidates, including
+5. Inspect escaped saved candidate text in **Inspect saved data** (step 2). These are raw candidates, including
    unrelated messages, not accepted transactions. Gmail receipt time uses a
    half-open Singapore-time month (Asia/Singapore, UTC+08:00): mail received at
    00:30 on 1 March in Singapore belongs to March, even though its UTC time is in
@@ -108,11 +109,11 @@ normalized mail snapshots retain previous versions; repeated identical content
 current pointer selects the most recently retrieved content even when it reverts
 to an earlier version. Stored observation IDs remain stable.
 
-Disconnect hides all saved mail, cancels sign-ins and deletes saved refresh authorization from the native store.
+Disconnect hides all saved mail, cancels sign-ins and removes saved refresh authorization from `.env`.
 **It does not delete saved mail or ledger history.** The same stable Google
 identity restores its cache; another account sees only its own mail. The default
-page never opens the native store or authorizes a network request. Credential
-store access remains explicit Connect/Restore/Load/Disconnect actions. OS access
+page never reads `.env` or authorizes a network request. `.env` access remains
+explicit Connect/Restore/Load/Disconnect actions. OS access
 is trusted; this is not multi-user access control. Saved mail is retained after
 disconnect. Compression retains older content recoverably; there is no purge or deletion action. Calendar-month
 loading is the only Gmail retrieval path.
@@ -125,9 +126,9 @@ uv run --locked python examples/monthly_preview.py --port 8877 --state partial
 ```
 
 Open **http://127.0.0.1:8877/?month=2025-02**. This runs the actual product with a
-disposable synthetic database, in-memory fake authorization and fake Gmail
-transport. No normal ledger, native store, real OAuth consent or network is used.
-Use **Mail inbox**, choose February 2025, and Continue to exhaust three synthetic
+disposable synthetic database, a temporary `.env`, fake authorization and fake Gmail
+transport. No normal ledger, real `.env`, real OAuth consent or network is used.
+Use **Connect Gmail**, choose February 2025, and Continue to exhaust three synthetic
 pages with 5 unique messages and 1 duplicate. The overview has 15 dated records,
 12 accepted decisions (one explicit duplicate excluded), 2 pending, 1 rejected and
 1 separately disclosed undated record. SGD purchases total **158.80** after the

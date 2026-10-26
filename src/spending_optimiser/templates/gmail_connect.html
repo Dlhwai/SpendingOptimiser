@@ -1,5 +1,0 @@
-{% extends 'base.html' %}
-{% block title %}Connect Gmail{% endblock %}
-{% block content %}
-<section class="card consent-card"><span class="account-icon" aria-hidden="true" style="margin-bottom:24px">@</span><p class="eyebrow">SECURE CONNECTION · STEP 1 OF 2</p><h1>Continue on Google's page.</h1><p class="muted">You're about to authorize a read-only Gmail connection. Check the Google account you select before approving access.</p><ul><li>This app can read mail, but cannot send, delete or modify it.</li><li>OpenID supplies a stable account identity.</li><li>No mail is loaded on sign-in. You'll choose a calendar month and select Load month after returning.</li></ul><p class="warning">Use the same browser tab/profile and finish within 10 minutes. Don't copy the callback URL. Cancelled or denied consent loads nothing.</p><div class="actions"><a class="button" href="{{ authorization_url }}" rel="noreferrer">Continue to Google <span aria-hidden="true">↗</span></a><a class="button quiet" href="/gmail">Cancel / return to Gmail</a></div></section>
-{% endblock %}

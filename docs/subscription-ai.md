@@ -1,6 +1,7 @@
 # Safe, subscription-backed desktop AI
 
-This follow-up adds a separate **Safe AI analysis** page. Ordinary Gmail loading,
+This follow-up adds a separate **Safe AI analysis** page (a tab of step 3,
+**Understand this month**). Ordinary Gmail loading,
 transaction lookups and financial calculations do not invoke a model. The default
 app is disconnected and needs no AI client. For saved-data charts, see the
 [deterministic monthly workflow](monthly.md).
@@ -76,8 +77,15 @@ Install the pinned official package **locally**, not globally:
 
 ```sh
 npm install --prefix "$HOME/.local/share/spending-optimiser/codex-client" @openai/codex@0.164.0
-uv run --locked spending-optimiser \
-  --codex-client "$HOME/.local/share/spending-optimiser/codex-client/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex"
+```
+
+Tell the app where the official native executable is, either in the gitignored `.env`
+(see `.env.example`) or with a flag:
+
+```sh
+SPENDING_CODEX_CLIENT='/Users/you/.local/share/spending-optimiser/codex-client/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex'
+uv run --locked spending-optimiser                      # reads SPENDING_CODEX_CLIENT
+uv run --locked spending-optimiser --codex-client /absolute/path/to/codex   # overrides it
 ```
 
 If using a non-default ledger, include the same `--database /absolute/private/path`
@@ -86,22 +94,29 @@ a shell wrapper, is required. The app checks SHA-256
 `d8990e3ee7acfbc26f91265b12a1a83f0fee40d0e0f8f1f40a37d4ec21f499cf`.
 Other versions, platforms and binaries fail unavailable rather than silently using
 weaker controls. Do not upgrade the client without requalifying enforcement.
+The app reads only this one path from `.env` at startup; it never exports `.env`
+values to the official client, whose environment is a fixed allowlist.
 
-1. Open the app's `http://127.0.0.1` address and choose **Safe AI analysis**.
-2. Select **Connect / restore ChatGPT session**. The app creates a private,
-   database-specific official-client home beside the database and refuses unsafe
-   effective configuration. No default Codex/worker session or ambient API/proxy
-   variables are reused.
-3. For a new connection, follow **Continue to official ChatGPT consent**. Sign-in,
-   OAuth callback and token refresh belong to the unmodified official client.
-   Return to the app and select **Check saved session after consent**. Keychain
-   must be available/unlocked; there is no plaintext fallback. An eligible cached
-   subscription session may instead restore directly on the explicit Connect POST.
-4. Capture official terms (or save a placeholder structure), inspect its complete
+1. Open **Safe AI analysis** from step 3.
+2. Choose **Connect ChatGPT**. This opens a sign-in window exactly like Gmail's:
+   the app starts the official client, which creates a private, database-specific
+   client home beside the database and refuses unsafe effective configuration. No
+   default Codex/worker session or ambient API/proxy variables are reused. Sign in
+   and consent only on the official ChatGPT page; the client's own callback and token
+   exchange complete it, so the sign-in window is closed by you afterwards. The app
+   page asks its own status endpoint (a local account lookup, never a model call)
+   and shows **ChatGPT connected** only once the client reports an eligible
+   subscription account. If the browser blocks the window, choose **Continue in this
+   window**; **Cancel sign-in** cancels the client's login, and an attempt expires
+   after 10 minutes. A denied or failed login is reported in the app. Without
+   JavaScript, **Check sign-in** performs the same lookup on request. An eligible
+   cached subscription session restores directly on the Connect POST.
+3. Capture official terms (or save a placeholder structure), inspect its complete
    application-supplied input,
    check the consent box and select **Request analysis now**. Nothing is sent by
-   Save, preview, a page GET, Gmail loading or an ordinary ledger lookup.
-5. Review the structured result, evidence and unknowns. Accept or reject it.
+   Save, preview, a page GET, Gmail loading, sign-in, status polling or an ordinary
+   ledger lookup.
+4. Review the structured result, evidence and unknowns. Accept or reject it.
    Accepted format layouts only create unsaved, review-pending Mail proposals.
 
 The saved-session label is not a live entitlement guarantee. This project has not
@@ -117,6 +132,23 @@ native deletion fails, unlock Keychain, reconnect and retry. Provider-wide conse
 revocation remains in the provider's account settings. Other databases' provider
 sessions and proposal histories are separate. A changed account is refused until
 explicit reconnection; proposals cannot be accepted under a different account.
+
+### Where the ChatGPT authorization is stored
+
+Gmail's client and refresh token live in the gitignored `.env` (see
+[gmail.md](gmail.md)). **ChatGPT's do not, by design of the supported route.** The
+official client persists its own OAuth tokens only in its mandatory native keyring
+(`cli_auth_credentials_store = "keyring"`, keyed by the isolated `CODEX_HOME`), and
+it has no setting that reads or writes tokens in an application's `.env`. Putting
+them there would mean this app reading the client's tokens or handing it tokens
+through `account/login/start` with `type: "chatgptAuthTokens"`, which the 0.164.0
+protocol schema marks "[UNSTABLE] FOR OPENAI INTERNAL USE ONLY - DO NOT USE" and
+which would require this app to hold access tokens and answer the client's token
+refresh requests. This app refuses every client-initiated callback, so it does not
+implement that bridge. Only non-secret app configuration (`SPENDING_CODEX_CLIENT`)
+uses `.env`. The client's alternative `file` store would write a plaintext
+`auth.json` inside the client home, not `.env`, and is rejected by the effective
+configuration check. Changing that is a separate decision.
 
 ## Privacy and enforcement
 
@@ -204,12 +236,14 @@ path. No existing Gemini/worker credentials are inspected or reused.
 uv run --locked python examples/ui_preview.py --port 8893
 ```
 
-This is the actual desktop UI with a disposable database, fake cached subscription,
-fake model, fake Gmail and memory-only credentials. **No provider/native credential
+This is the actual desktop UI with a disposable database, a temporary `.env`, a fake
+cached subscription, fake model and fake Gmail. **No provider/native credential
 access occurs.** Port 8765 is refused. A fake transport serves synthetic DBS-origin
 pages; no network is used. Choose Safe AI analysis, Connect, capture terms for
-`yuu`, save a structure, inspect the input, request analysis and review/accept/reject. The banner
-labels all screens synthetic. Ctrl-C removes the disposable database.
+`yuu`, save a structure, inspect the input, request analysis and review/accept/reject.
+Add `--ai-signed-out` to start without a cached subscription and approve a synthetic
+sign-in in the sign-in window. The banner labels all screens synthetic. Ctrl-C removes
+the disposable database.
 
 ```sh
 uv run --locked pytest
