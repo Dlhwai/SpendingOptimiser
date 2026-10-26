@@ -1,20 +1,20 @@
 {% extends 'base.html' %}
+{% from 'components.html' import month_tabs %}
+{% set step = 3 %}
 {% block title %}Review safe AI proposal{% endblock %}
 {% block content %}
-<div class="page-head"><div><p class="eyebrow">PROPOSED, NOT INSTALLED</p><h1>Review safe AI proposal</h1><p class="muted">Evidence, uncertainty and provenance remain attached to this immutable proposal.</p></div><span class="badge">{{ record.status }}</span></div>
+<div class="page-head"><div><p class="eyebrow">Step 3 of 3</p><h1>Review safe AI proposal</h1></div><span class="badge">{{ record.status }}</span></div>
+{{ month_tabs('ai') }}
 <section class="card"><h2>{{ record.result.kind|title }} reference</h2>
 {% if record.result.kind == 'terms' %}
 {% if record.result.usable %}{% set threshold = record.result.rule.minimum_spend.value[0].threshold.value %}<p>Proposed minimum spend: <strong>{{ threshold.currency }} {{ threshold.minor_units }} minor units</strong>.</p>{% else %}<p>No supported threshold was established.</p>{% endif %}
-<p>Other qualifiers remain in the exact evidence below. This is not a verified, complete or executable rewards rule.</p>
-<h3>Public source evidence</h3><p>{{ record.result.rule.minimum_spend.evidence[0].quote if record.result.usable else 'No evidenced value proposed.' }}</p><p class="small text-wrap">Official capture: {{ record.result.evidence.url }}<br>Retrieved by this app {{ record.result.evidence.retrieved_at }}</p>
+<h3>Public source evidence</h3><blockquote>{{ record.result.rule.minimum_spend.evidence[0].quote if record.result.usable else 'No evidenced value proposed.' }}</blockquote><p class="small text-wrap">Official capture: {{ record.result.evidence.url }}<br>Retrieved {{ record.result.evidence.retrieved_at }}</p>
 {% else %}
 {% if record.result.layout %}<p>Proposed placeholder roles:</p><pre>{{ record.result.layout.template }}</pre><ul>{% for marker, role in record.result.layout.fields.items() %}<li>{{ marker }} → {{ role }}</li>{% endfor %}</ul>{% else %}<p>No supported structure established.</p>{% endif %}
 {% if record.result.synthetic_test %}<p><strong>Deterministic synthetic check passed.</strong> SGD 12.34 · fictional values only.</p>{% endif %}
-<p>No generated code or regex is installed. Accepting enables local fixed-pattern parsing of loaded mail into unsaved proposals. Real mail compatibility and authenticity remain unqualified.</p>
 {% endif %}
 <p><strong>Unknown:</strong> {{ record.result.unknown|join(', ') }}.</p><p class="small">Provider: {{ record.result.provenance.provider }} · Official client {{ record.result.provenance.client_version }}</p>
 {% if record.status == 'pending' %}<div class="actions"><form action="/ai/review" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="proposal_id" value="{{ record.id }}"><input type="hidden" name="action" value="accepted"><button {% if not record.result.usable %}disabled{% endif %}>Accept as saved reference only</button></form><form action="/ai/review" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="proposal_id" value="{{ record.id }}"><input type="hidden" name="action" value="rejected"><button class="secondary">Reject proposal</button></form></div>{% endif %}
-<p class="small muted">Acceptance never marks financial facts verified, alters transactions or calculates rewards. It preserves existing history. A later accepted version must descend from the current accepted reference.</p>
 <details class="disclosure"><summary>Full validated structured result and provenance ({{ rendered|length }} characters)</summary><pre>{{ rendered }}</pre></details>
-</section><p class="subtle-note">Next: <a href="/ai">return to safe input and reference history</a>.</p>
+</section>
 {% endblock %}

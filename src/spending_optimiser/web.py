@@ -15,7 +15,13 @@ from urllib.parse import urlencode
 
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
@@ -30,7 +36,8 @@ from .codex_client import MESSAGES as AI_MESSAGES
 from .codex_client import AIProblem
 from .common import EvidenceRef
 from .document import walk
-from .gmail_auth import MESSAGES, GmailProblem, NativeStore, configure_google
+from .dotenv_store import DotenvError, DotenvFile, default_env_path
+from .gmail_auth import MESSAGES, EnvStore, GmailProblem, configure_google
 from .gmail_service import GmailService
 from .ledger import CORRECTION_FIELDS, Conflict, Ledger, heads, needs_review, uncertain
 from .monthly import SINGAPORE, calendar_month, format_money, grouping, monthly_report
@@ -38,6 +45,7 @@ from .public_terms import ISSUERS
 from .storage import Storage
 
 MAX_BODY = 2 * 1024 * 1024
+CODEX_CLIENT_NAME = "SPENDING_CODEX_CLIENT"
 DEFAULT_DB = Path.home() / ".local" / "share" / "spending-optimiser" / "ledger.sqlite3"
 
 
@@ -90,9 +98,12 @@ class LocalBoundary:
                     (b"x-content-type-options", b"nosniff"),
                     (
                         b"content-security-policy",
-                        b"default-src 'none'; style-src 'unsafe-inline'; "
-                        b"form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+                        b"default-src 'none'; script-src 'self'; connect-src 'self'; "
+                        b"style-src 'unsafe-inline'; form-action 'self'; "
+                        b"frame-ancestors 'none'; base-uri 'none'",
                     ),
+                    # Provider pages in the sign-in window cannot keep a handle to this app.
+                    (b"cross-origin-opener-policy", b"same-origin"),
                 ]
             await send(message)
 
@@ -100,12 +111,23 @@ class LocalBoundary:
 
 
 def create_app(
-    database: str | Path | None = None, *, gmail_service=None, ai_service=None, codex_client=None
+    database: str | Path | None = None,
+    *,
+    gmail_service=None,
+    ai_service=None,
+    codex_client=None,
+    env_file: str | Path | None = None,
 ) -> FastAPI:
     ledger = Ledger(database or os.environ.get("SPENDING_OPTIMISER_DB", DEFAULT_DB))
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.ledger = ledger
-    gmail = gmail_service if gmail_service is not None else GmailService(ledger.path)
+    gmail = (
+        gmail_service
+        if gmail_service is not None
+        else GmailService(
+            ledger.path, store=None if env_file is None else EnvStore(DotenvFile(env_file))
+        )
+    )
     app.state.gmail = gmail
     ai = ai_service if ai_service is not None else AIService(ledger, binary=codex_client)
     app.state.ai = ai
@@ -118,6 +140,7 @@ def create_app(
     templates = Jinja2Templates(directory=str(files("spending_optimiser").joinpath("templates")))
     templates.env.globals["money"] = format_money
     templates.env.globals["singapore"] = SINGAPORE
+    connect_script = files("spending_optimiser").joinpath("static/provider-connect.js").read_text()
     # Only an opaque session ID goes in this signed, HttpOnly cookie. Lax permits
     # Google's top-level callback GET; existing mutation CSRF cookie stays Strict.
     app.add_middleware(
@@ -218,10 +241,41 @@ def create_app(
                 gmail.problem = exc.code
                 return None
 
+    @app.get("/static/provider-connect.js")
+    def provider_script():
+        return Response(connect_script, media_type="text/javascript")
+
+    def display_mode(form):
+        # "popup" targets the sign-in window; "window" is the explicit same-window fallback.
+        display = text_field(form, "display") or "window"
+        if display not in {"popup", "window"}:
+            raise HTTPException(422, "Unknown sign-in display")
+        return display
+
+    def provider_outcome(request, provider, back, connected, problem, messages):
+        """Final state of a sign-in as shown in the sign-in window. No codes, no tokens."""
+        if connected and not problem:
+            state, message = "connected", f"{provider} connected."
+        elif problem in {"cancelled", "consent_denied"}:
+            state, message = "cancelled", messages[problem]
+        else:
+            state, message = "failed", messages.get(problem, "Sign-in did not complete.")
+        response = render(
+            request,
+            "provider_result.html",
+            provider=provider,
+            state=state,
+            message=message,
+            back=back,
+        )
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
+
     @app.get("/gmail", response_class=HTMLResponse)
     def gmail_page(request: Request):
-        request.session.setdefault("id", secrets.token_urlsafe(32))
+        session = request.session.setdefault("id", secrets.token_urlsafe(32))
         month = calendar_month(request.query_params.get("month"))
+        waiting = gmail.status(session)["state"] == "pending"  # may record an expired attempt
         view = copy(gmail)  # one account identity per rendered response, even during switches
         candidates, scan = view.saved_month(month)
         return render(
@@ -229,6 +283,22 @@ def create_app(
             "gmail.html",
             gmail=view,
             messages=MESSAGES,
+            month=month,
+            count=len(candidates),
+            scan=scan,
+            waiting=waiting,
+        )
+
+    @app.get("/saved", response_class=HTMLResponse)
+    def saved_page(request: Request):
+        request.session.setdefault("id", secrets.token_urlsafe(32))
+        month = calendar_month(request.query_params.get("month"))
+        view = copy(gmail)
+        candidates, scan = view.saved_month(month)
+        return render(
+            request,
+            "saved.html",
+            gmail=view,
             month=month,
             candidates=candidates,
             scan=scan,
@@ -274,23 +344,27 @@ def create_app(
             )
 
         await run_in_threadpool(gmail_operation, restore)
-        return RedirectResponse("/gmail?" + urlencode({"month": month.key}), status_code=303)
+        return RedirectResponse("/saved?" + urlencode({"month": month.key}), status_code=303)
 
     @app.post("/gmail/connect", response_class=HTMLResponse)
     async def gmail_connect(request: Request):
-        await form_data(request, set())
+        form = await form_data(request, {"display"})
+        display = display_mode(form)
         if request.url.scheme != "http" or request.url.hostname != "127.0.0.1":
             raise HTTPException(
                 400, "Open this application on http://127.0.0.1 at its local port to connect Gmail"
             )
         session = request.session.setdefault("id", secrets.token_urlsafe(32))
+        request.session["display"] = display
         redirect = str(request.url.replace(path="/gmail/callback", query=""))
         url = await run_in_threadpool(gmail_operation, gmail.begin, session, redirect)
         if url is None:
-            return RedirectResponse("/gmail", status_code=303)
-        # Use an explicit top-level link, not an external POST/form redirect, to
+            if display == "window":
+                return RedirectResponse("/gmail", status_code=303)
+            return provider_outcome(request, "Gmail", "/gmail", False, gmail.problem, MESSAGES)
+        # Continue with a top-level refresh and link, not an external POST/form redirect, to
         # retain the existing form-action 'self' and Origin protections.
-        return render(request, "gmail_connect.html", authorization_url=url)
+        return render(request, "provider_forward.html", provider="Google", url=url, back="/gmail")
 
     @app.get("/gmail/callback")
     async def gmail_callback(request: Request):
@@ -310,9 +384,23 @@ def create_app(
                 str(request.url.replace(query="")),
             )
         # Never render or propagate the authorization code, state or upstream errors.
+        if request.session.get("display") == "popup":
+            return provider_outcome(
+                request, "Gmail", "/gmail", gmail.connection is not None, gmail.problem, MESSAGES
+            )
         response = RedirectResponse("/gmail", status_code=303)
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
+
+    @app.get("/gmail/status")
+    def gmail_status(request: Request):
+        return JSONResponse(gmail.status(request.session.get("id", "")))
+
+    @app.post("/gmail/cancel")
+    async def gmail_cancel(request: Request):
+        await form_data(request, set())
+        await run_in_threadpool(gmail_operation, gmail.cancel, request.session.get("id", ""))
+        return RedirectResponse("/gmail", status_code=303)
 
     @app.post("/gmail/restore")
     async def gmail_restore(request: Request):
@@ -373,14 +461,40 @@ def create_app(
             preview=preview,
             fingerprint=digest(preview) if preview else None,
             proposals=ai.proposals(),
+            waiting=ai.status()["state"] == "pending",
         )
 
-    @app.post("/ai/connect")
+    @app.post("/ai/connect", response_class=HTMLResponse)
     async def ai_connect(request: Request):
-        await form_data(request, set())
+        form = await form_data(request, {"display"})
+        display = display_mode(form)
         if request.url.hostname != "127.0.0.1" or request.url.scheme != "http":
             raise HTTPException(400, "Use the app's http://127.0.0.1 loopback address to connect")
         await run_in_threadpool(ai_operation, ai.connect)
+        if ai.authorization_url:
+            # The official client owns the callback and token exchange, not this app.
+            return render(
+                request,
+                "provider_forward.html",
+                provider="ChatGPT",
+                url=ai.authorization_url,
+                back="/ai",
+            )
+        if display == "window":
+            return RedirectResponse("/ai", 303)
+        return provider_outcome(
+            request, "ChatGPT", "/ai", ai.connection is not None, ai.problem, AI_MESSAGES
+        )
+
+    @app.get("/ai/status")
+    async def ai_status():
+        await run_in_threadpool(ai.poll)
+        return JSONResponse(ai.status())
+
+    @app.post("/ai/cancel")
+    async def ai_cancel(request: Request):
+        await form_data(request, set())
+        await run_in_threadpool(ai.cancel)
         return RedirectResponse("/ai", 303)
 
     @app.post("/ai/confirm")
@@ -586,7 +700,7 @@ def main():
     parser.add_argument(
         "--configure-google",
         action="store_true",
-        help="Import Desktop OAuth client JSON from stdin to the native OS store, then exit",
+        help="Save Desktop OAuth client JSON from stdin to the .env file, then exit",
     )
     parser.add_argument(
         "--database", type=Path, help=f"SQLite path (default: {DEFAULT_DB}; env supported)"
@@ -595,9 +709,15 @@ def main():
     parser.add_argument(
         "--codex-client",
         type=Path,
-        help="Opt in to the proof-qualified official Codex binary; see docs/subscription-ai.md",
+        help="Official Codex binary (default: SPENDING_CODEX_CLIENT in .env); see "
+        "docs/subscription-ai.md",
     )
     args = parser.parse_args()
+    try:
+        env_file = default_env_path()
+    except DotenvError as exc:
+        print(f"error: application folder for .env not found ({exc.reason})", file=sys.stderr)
+        raise SystemExit(2) from None
     if args.configure_google:
         try:
             if sys.stdin.isatty():
@@ -605,19 +725,26 @@ def main():
             raw = sys.stdin.read(65537)
             if len(raw) > 65536:
                 raise GmailProblem("invalid_configuration")
-            configure_google(NativeStore(), raw)
+            configure_google(EnvStore(DotenvFile(env_file)), raw)
         except GmailProblem as exc:
             print(f"error: {exc.code}; {exc}", file=sys.stderr)
             raise SystemExit(2) from None
-        print(
-            "Google client saved to native OS credential store. "
-            "Next: start the app and Connect Gmail."
-        )
+        print("Google client saved to the .env file. Next: start the app and Connect Gmail.")
         return
     if not 1 <= args.port <= 65535:
         parser.error("port must be between 1 and 65535")
+    codex_client = args.codex_client
+    if codex_client is None:
+        try:
+            configured = DotenvFile(env_file).values((CODEX_CLIENT_NAME,))
+        except DotenvError as exc:
+            print(f"error: .env cannot be read safely ({exc.reason})", file=sys.stderr)
+            raise SystemExit(2) from None
+        codex_client = (
+            Path(configured[CODEX_CLIENT_NAME]) if configured.get(CODEX_CLIENT_NAME) else None
+        )
     uvicorn.run(
-        create_app(args.database, codex_client=args.codex_client),
+        create_app(args.database, codex_client=codex_client, env_file=env_file),
         host="127.0.0.1",
         port=args.port,
         proxy_headers=False,

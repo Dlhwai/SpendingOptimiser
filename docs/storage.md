@@ -1,6 +1,6 @@
 # Local storage and recoverable older detail
 
-Open **Storage & archives** in the desktop sidebar for measured bytes, exact paths,
+Open the **Storage** tab under **Inspect saved data** for measured bytes, exact paths,
 archive counts, a manual compression check and account-scoped month restoration.
 There is no daemon, scheduler, cloud storage, extraction or AI involved.
 
@@ -9,7 +9,7 @@ There is no daemon, scheduler, cloud storage, extraction or AI involved.
 The current **Asia/Singapore calendar month plus the preceding two** remain hot,
 not a rolling 90-day window. For example, in May the working window starts March
 1 at 00:00 Singapore time. Future-dated data is not eligible. Mail uses the same
-Gmail receipt timestamp/month boundaries as Mail inbox, not the untrusted Date
+Gmail receipt timestamp/month boundaries as Connect Gmail, not the untrusted Date
 header. Financial months still use canonical transaction event dates.
 
 All canonical ledger records, older revisions, observations, public evidence,
@@ -29,15 +29,14 @@ Application-managed usage is the sum of logical file sizes in **bytes** of:
 - Its `-wal`, `-shm` and `-journal` sidecars, if present.
 
 Absent paths count as zero. This is not filesystem allocated blocks or total disk
-usage. All archives stay inside that same database. Credentials in the native OS
-store, application code, downloaded Google client JSON, user backups, browser
+usage. All archives stay inside that same database. The `.env` file, application code, downloaded Google client JSON, user backups, browser
 storage and OS temporary files are excluded. SQLite's temporary compaction space
 is not part of this ongoing measurement and may require additional free disk.
 
 Compression is considered **strictly above 1,000,000,000 bytes (1 decimal GB)**,
 never at exactly that amount. Checks occur after successful imports, manual
 reviews and saved-mail page/retry writes, plus the explicit storage-page action.
-Page views do not compress, fetch mail, open the credential store or mutate the
+Page views do not compress, fetch mail, read `.env` or mutate the
 archive. No startup/background scan runs. A database that grows while idle will
 be measured on the storage page and processed on the next write/manual check.
 
@@ -72,11 +71,11 @@ honestly. Nothing is purged and current working data is not evicted to reach 1 G
 ## Reading and restoring
 
 Older monthly financial statistics and transaction detail need no restoration.
-Mail inbox can also read older compressed candidates: payloads are verified and
-decoded locally in memory. **Restore saved mail month** in Mail inbox or Storage
+Saved mail can also read older compressed candidates: payloads are verified and
+decoded locally in memory. **Restore saved mail month** in Saved mail or Storage
 persists *all content versions* of that account's selected month back as text in
 one transaction. This is separate from **Restore saved connection**, which reads
-authorization from the native store. Archive restoration makes no Google/model
+authorization from `.env`. Archive restoration makes no Google/model
 requests and does not access credentials. Repeating it restores zero additional
 versions. Disconnect still hides mail without removing it; reconnect the same
 stable Google identity to read or restore it. Stale account forms are rejected.
@@ -136,7 +135,7 @@ uv run --locked python examples/storage_preview.py --port 8898 --remain-above
 
 Use an **unused** loopback port, never 8765. Open
 `http://127.0.0.1:8898/storage?month=2025-02`, inspect the above-trigger warning,
-then Mail inbox for February 2025 and restore the older versions. The fixture uses
+then Saved mail for February 2025 and restore the older versions. The fixture uses
 the real desktop routes, fake Gmail/OAuth/credential dependencies, fictional
 multi-currency ledger history and a disposable database. A sparse synthetic
 **non-WAL** sidecar contributes over a decimal GB of logical bytes without

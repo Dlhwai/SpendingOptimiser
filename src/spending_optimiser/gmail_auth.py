@@ -1,10 +1,9 @@
-"""Desktop Google authorization and native-only credentials. No mail or ledger writes."""
+"""Desktop Google authorization and .env-backed credentials. No mail or ledger writes."""
 
 import functools
 import json
 import re
 import secrets
-import sys
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -13,44 +12,42 @@ from google.oauth2 import id_token
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 
+from .dotenv_store import DotenvError, DotenvFile
 from .gmail import GMAIL_READONLY_SCOPE, UrllibGetTransport
 
 SCOPES = (GMAIL_READONLY_SCOPE, "openid")
 AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URI = "https://oauth2.googleapis.com/token"
-SERVICE = "spending-optimiser.gmail"
+CLIENT_ID_NAME = "SPENDING_GOOGLE_CLIENT_ID"
+CLIENT_SECRET_NAME = "SPENDING_GOOGLE_CLIENT_SECRET"
+AUTHORIZATION_PREFIX = "SPENDING_GMAIL_AUTHORIZATION_"
 
 MESSAGES = {
-    "secure_store_unavailable": (
-        "Secure OS credential store unavailable or locked. Unlock/configure the native store "
-        "and retry; no plaintext fallback is used."
+    "env_unavailable": (
+        "The local .env file cannot be read or written safely. Check its path and permissions."
     ),
-    "not_configured": "Google client not configured. Follow docs/gmail.md, then Connect Gmail.",
+    "not_configured": (
+        "Google client not configured. Add SPENDING_GOOGLE_CLIENT_ID and "
+        "SPENDING_GOOGLE_CLIENT_SECRET to .env."
+    ),
     "invalid_configuration": (
-        "Invalid Google Desktop app configuration. Import the downloaded installed-app client "
-        "JSON using --configure-google."
+        "Invalid Google client in .env. Use the ID and secret of a Desktop app OAuth client."
     ),
-    "invalid_callback": (
-        "Invalid, expired, reused or unsolicited callback. Return to Gmail and Connect again."
-    ),
-    "consent_denied": (
-        "Google consent was denied or cancelled. No mail loaded. Connect again when ready."
-    ),
-    "oauth_failed": "Google authorization failed. Check client setup and try Connect again.",
+    "invalid_callback": "Sign-in could not be verified (invalid, expired or reused). Try again.",
+    "consent_denied": "Google sign-in was denied or cancelled. Nothing was loaded.",
+    "oauth_failed": "Google authorization failed. Check the client configuration and try again.",
     "scope_denied": (
         "Only Gmail read-only and OpenID identity access are supported. Grant the requested "
         "scopes with a dedicated client and reconnect."
     ),
-    "reconnect": (
-        "Authorization expired, was revoked or could not refresh. Reconnect Gmail; "
-        "no automatic consent or mail loading occurs."
-    ),
+    "reconnect": "Authorization expired or was revoked. Reconnect Gmail.",
     "disconnected": (
-        "Gmail disconnected locally; mail hidden, saved mail remains on this device. "
-        "To revoke the Google grant too, "
-        "remove this app in your Google Account connections."
+        "Gmail disconnected. Saved mail stays on this device. "
+        "Remove the app in your Google Account to revoke access."
     ),
-    "no_saved_connection": "No saved connection. Choose Connect Gmail.",
+    "no_saved_connection": "No saved connection. Connect Gmail.",
+    "cancelled": "Sign-in cancelled.",
+    "expired": "Sign-in expired. Reconnect Gmail.",
 }
 
 
@@ -66,45 +63,66 @@ class CredentialStore(Protocol):
     def delete(self, key: str) -> None: ...
 
 
-class NativeStore:
-    """Select a native backend explicitly, never keyring's fallback/chainer."""
+class EnvStore:
+    """Credential store over the application's gitignored .env: plaintext, owner-only.
 
-    def _backend(self):
-        if sys.platform == "darwin":
-            from keyring.backends.macOS import Keyring
-        elif sys.platform == "win32":
-            from keyring.backends.Windows import WinVaultKeyring as Keyring
-        elif sys.platform.startswith("linux"):
-            from keyring.backends.SecretService import Keyring
-        else:
-            raise GmailProblem("secure_store_unavailable")
-        backend = Keyring()
-        if backend.priority <= 0:
-            raise GmailProblem("secure_store_unavailable")
-        return backend
+    Values are read and written through DotenvFile and never exported to os.environ,
+    so no child process (such as the GPT client) inherits them.
+    """
+
+    def __init__(self, env):
+        self.env = env if isinstance(env, DotenvFile) else DotenvFile(env)
+
+    @staticmethod
+    def _name(key):
+        if not re.fullmatch(r"connection-[0-9a-f]{64}", key):
+            raise ValueError("Unknown credential key")
+        return AUTHORIZATION_PREFIX + key.removeprefix("connection-").upper()
 
     def get(self, key):
         try:
-            return self._backend().get_password(SERVICE, key)
-        except Exception:
-            raise GmailProblem("secure_store_unavailable") from None
+            if key == "desktop-client":
+                found = self.env.values((CLIENT_ID_NAME, CLIENT_SECRET_NAME))
+                if len(found) != 2 or not all(found.values()):
+                    return None  # blank placeholders from .env.example count as unset
+                return json.dumps(
+                    {
+                        "installed": {
+                            "client_id": found[CLIENT_ID_NAME],
+                            "client_secret": found[CLIENT_SECRET_NAME],
+                        }
+                    }
+                )
+            name = self._name(key)
+            return self.env.values((name,)).get(name)
+        except DotenvError:
+            raise GmailProblem("env_unavailable") from None
 
     def put(self, key, value):
         try:
-            backend = self._backend()
-            backend.set_password(SERVICE, key, value)
-            if backend.get_password(SERVICE, key) != value:
-                raise ValueError()
-        except Exception:
-            raise GmailProblem("secure_store_unavailable") from None
+            if key == "desktop-client":
+                installed = json.loads(value)["installed"]
+                self.env.update(
+                    {
+                        CLIENT_ID_NAME: installed["client_id"],
+                        CLIENT_SECRET_NAME: installed["client_secret"],
+                    }
+                )
+            else:
+                self.env.update({self._name(key): value})
+        except DotenvError:
+            raise GmailProblem("env_unavailable") from None
 
     def delete(self, key):
         try:
-            backend = self._backend()
-            if backend.get_password(SERVICE, key) is not None:
-                backend.delete_password(SERVICE, key)
-        except Exception:
-            raise GmailProblem("secure_store_unavailable") from None
+            names = (
+                (CLIENT_ID_NAME, CLIENT_SECRET_NAME)
+                if key == "desktop-client"
+                else (self._name(key),)
+            )
+            self.env.update(remove=names)
+        except DotenvError:
+            raise GmailProblem("env_unavailable") from None
 
 
 def client_config(raw):

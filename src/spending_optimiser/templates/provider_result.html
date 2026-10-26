@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>{{ provider }} sign-in | SpendingOptimiser</title>
+<style>{% include 'styles.css' %}</style>
+</head>
+<body class="popup-body">
+<main id="main" class="card popup-card" data-auth-result="{{ state }}"><h1>{{ {'connected': provider ~ ' connected', 'cancelled': 'Sign-in cancelled', 'failed': 'Sign-in failed'}[state] }}</h1>
+<div class="{{ 'notice' if state == 'connected' else 'error-note' }}" role="{{ 'status' if state != 'failed' else 'alert' }}">{{ message }}</div>
+<div class="actions"><button type="button" data-close-window hidden>Close window</button><a class="button secondary" href="{{ back }}">Return to app</a></div></main>
+<script src="/static/provider-connect.js"></script>
+</body></html>

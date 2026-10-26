@@ -1,13 +1,32 @@
 {% macro transactions_table(transactions, groups=none) %}
-<table class="data-table responsive-table"><caption class="muted small" style="text-align:left;padding-bottom:16px">Notification events, not reconciled bank postings. Amounts are magnitudes in integer minor units.</caption><thead><tr><th scope="col">Event / merchant</th><th scope="col">Kind / event date</th>{% if groups %}<th scope="col">Card / account / avenue</th>{% endif %}<th scope="col">Amount magnitude</th><th scope="col">Review</th></tr></thead><tbody>
+<table class="data-table responsive-table"><thead><tr><th scope="col">Event / merchant</th><th scope="col">Kind / event date</th>{% if groups %}<th scope="col">Card / account / avenue</th>{% endif %}<th scope="col">Amount magnitude</th><th scope="col">Review</th></tr></thead><tbody>
 {% for t in transactions %}<tr>
-<td data-label="Event / merchant"><a href="{{ '/transaction?event_id=' ~ (t.event_id|urlencode) }}">{{ t.merchant.value or t.event_id }}</a>{% if t.merchant.value %}<small>{{ t.event_id }}</small>{% endif %}{% if t.duplicate_of %}<small>Explicit duplicate of {{ t.duplicate_of }}</small>{% endif %}</td>
+<td data-label="Event / merchant"><a href="{{ '/transaction?event_id=' ~ (t.event_id|urlencode) }}">{{ t.merchant.value or t.event_id }}</a>{% if t.merchant.value %}<small>{{ t.event_id }}</small>{% endif %}{% if t.duplicate_of %}<small>Duplicate of {{ t.duplicate_of }}</small>{% endif %}</td>
 <td data-label="Kind / event date">{{ t.kind.value or t.kind.status }}<small>{{ t.occurred_on.value or t.occurred_on.status }}</small></td>
 {% if groups %}<td data-label="Card / account / avenue">{{ groups[t.event_id] }}</td>{% endif %}
-<td data-label="Amount magnitude"><span class="amount">{% if t.amount.value %}{{ money(t.amount.value.currency, t.amount.value.minor_units) }}{% else %}{{ t.amount.status }}{% endif %}</span><small>{{ t.amount.status }}; not a signed bank posting</small></td>
+<td data-label="Amount magnitude"><span class="amount">{% if t.amount.value %}{{ money(t.amount.value.currency, t.amount.value.minor_units) }}{% else %}{{ t.amount.status }}{% endif %}</span><small>{{ t.amount.status }}</small></td>
 <td data-label="Review"><span class="badge {{ t.review.status }}">{{ t.review.status|replace('_',' ') }}</span></td>
 </tr>{% endfor %}</tbody></table>
 {% endmacro %}
 {% macro import_notice(added, unchanged) %}
-{% if added is not none %}<p class="notice" role="status">Import saved: {{ added }} new records; {{ unchanged }} unchanged records. All linked schema collections are included in these counts. <a href="/ledger">View transactions</a></p>{% endif %}
+{% if added is not none %}<p class="notice" role="status">Import saved: {{ added }} new records, {{ unchanged }} unchanged. <a href="/ledger">View transactions</a></p>{% endif %}
+{% endmacro %}
+{% macro tabs(label, items, current) %}
+<nav class="tabs" aria-label="{{ label }}">{% for key, href, text in items %}<a href="{{ href }}" {% if key == current %}aria-current="page"{% endif %}>{{ text }}</a>{% endfor %}</nav>
+{% endmacro %}
+{% macro inspect_tabs(current, month=none) %}
+{% set q = '?month=' ~ month.key if month else '' %}
+{{ tabs('Saved data', [('mail', '/saved' ~ q, 'Saved mail'), ('transactions', '/ledger' ~ q, 'Transactions'), ('review', '/review', 'Review queue'), ('evidence', '/public', 'Card evidence'), ('import', '/imports', 'Import data'), ('storage', '/storage' ~ q, 'Storage')], current) }}
+{% endmacro %}
+{% macro month_tabs(current, month=none) %}
+{% set q = '?month=' ~ month.key if month else '' %}
+{{ tabs('This month', [('month', '/' ~ q, 'This month'), ('ai', '/ai', 'Safe AI analysis')], current) }}
+{% endmacro %}
+{% macro provider_connect(name, action, label, status, attempt, csrf, quiet=false) %}
+<form action="{{ action }}" method="post" target="provider-auth" data-provider-connect="{{ name }}" data-status="{{ status }}" data-attempt="{{ attempt }}"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="display" value="popup"><button {% if quiet %}class="secondary"{% endif %}>{{ label }} <span aria-hidden="true">↗</span></button></form>
+{% endmacro %}
+{% macro provider_panels(name, provider, action, cancel, status, attempt, waiting, csrf) %}
+<div class="auth-note" data-auth-blocked="{{ name }}" role="alert" hidden><p>Your browser blocked the {{ provider }} sign-in window.</p><button type="button">Continue in this window</button></div>
+<div class="auth-note" data-auth-wait="{{ name }}" role="status" {% if waiting %}data-auth-resume data-status="{{ status }}"{% else %}hidden{% endif %}><p>Waiting for {{ provider }} sign-in. Finish in the sign-in window.</p><form action="{{ cancel }}" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary">Cancel sign-in</button></form></div>
+<noscript><form action="{{ action }}" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="display" value="window"><button class="secondary">Connect {{ provider }} in this window</button></form></noscript>
 {% endmacro %}

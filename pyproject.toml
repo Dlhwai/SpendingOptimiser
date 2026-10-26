@@ -15,9 +15,9 @@ dependencies = [
     "python-multipart==0.0.20",
     "google-auth==2.62.0",
     "google-auth-oauthlib==1.5.0",
-    "keyring==25.7.0",
     "requests==2.34.2",
     "itsdangerous==2.2.0",
+    "python-dotenv==1.2.4",
 ]
 
 [project.scripts]

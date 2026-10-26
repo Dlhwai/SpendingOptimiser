@@ -20,7 +20,6 @@ from spending_optimiser.gmail_auth import (
     GmailProblem,
     GoogleConnection,
     GoogleOAuth,
-    NativeStore,
     client_config,
     configure_google,
 )
@@ -41,17 +40,17 @@ class MemoryStore:
 
     def get(self, key):
         if self.fail == "get":
-            raise GmailProblem("secure_store_unavailable")
+            raise GmailProblem("env_unavailable")
         return self.values.get(key)
 
     def put(self, key, value):
         if self.fail == "put":
-            raise GmailProblem("secure_store_unavailable")
+            raise GmailProblem("env_unavailable")
         self.values[key] = value
 
     def delete(self, key):
         if self.fail == "delete":
-            raise GmailProblem("secure_store_unavailable")
+            raise GmailProblem("env_unavailable")
         self.values.pop(key, None)
 
 
@@ -171,7 +170,6 @@ def no_real_credentials_or_network(monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("Real network/native credentials are forbidden in tests")
 
-    monkeypatch.setattr(NativeStore, "_backend", forbidden)
     monkeypatch.setattr(requests.sessions.Session, "request", forbidden)
     monkeypatch.setattr("urllib.request.OpenerDirector.open", forbidden)
 
@@ -207,8 +205,8 @@ def post(env, path, **fields):
     return env.client.post(path, data={"csrf": env.client.cookies["ledger_csrf"], **fields})
 
 
-def begin(env):
-    response = post(env, "/gmail/connect")
+def begin(env, **fields):
+    response = post(env, "/gmail/connect", **fields)
     assert response.status_code == 200
     link = unescape(re.search(r'href="(https://accounts.google.com/[^"]+)"', response.text)[1])
     return parse_qs(urlparse(link).query)
@@ -258,9 +256,10 @@ def test_oauth_real_library_flow_load_refresh_and_ledger_preserved(setup):
     assert len(env.google.calls) == 1 and env.google.calls[0].endswith("/profile")
     response = load(env)
     assert "2 saved candidates" in response.text and "2 duplicate IDs skipped" in response.text
-    assert "not validated financial facts" in response.text
-    assert "&lt;script&gt;" in response.text and "<script>" not in response.text
-    assert "<img src=x>" not in response.text
+    inbox = env.client.get("/saved?month=2025-02").text
+    assert "Not in ledger" in inbox
+    assert "&lt;script&gt;" in inbox and "<script>" not in inbox
+    assert "<img src=x>" not in inbox
     identities = [c.observation.observation_id for c in saved(env.service).values()]
     response = load(env)
     assert "2 saved candidates" in response.text and "Query exhausted" in response.text
@@ -290,9 +289,10 @@ def test_oauth_real_library_flow_load_refresh_and_ledger_preserved(setup):
         "unsolicited",
     ],
 )
-def test_callback_security(setup, attack):
+@pytest.mark.parametrize("display", ["window", "popup"])
+def test_callback_security(setup, attack, display):
     env = setup
-    params = begin(env)
+    params = begin(env, display=display)
     state = params["state"][0]
     client = env.client
     url = CALLBACK
@@ -315,7 +315,13 @@ def test_callback_security(setup, attack):
     elif attack == "unsolicited":
         env.service.pending.clear()
     response = client.get(url, params=query, follow_redirects=False)
-    assert response.status_code == 303 and response.headers["location"] == "/gmail"
+    anonymous = attack in {"no_cookie", "wrong_browser", "wrong_host"}  # no session to say "popup"
+    if display == "window" or anonymous:
+        assert response.status_code == 303 and response.headers["location"] == "/gmail"
+    else:
+        # The sign-in window shows a failed result and never renders the callback values.
+        assert response.status_code == 200 and 'data-auth-result="failed"' in response.text
+        assert state not in response.text
     assert response.headers["referrer-policy"] == "no-referrer"
     assert env.service.connection is None and not env.google.exchanges
     assert "fake-authorization-code" not in response.text
@@ -332,7 +338,7 @@ def test_callback_single_use_cancel_failure_and_nonce(setup):
     response = env.client.get("/gmail/callback", params=query)
     assert "denied or cancelled" in response.text and "fake-sensitive" not in response.text
     response = env.client.get("/gmail/callback", params=query)
-    assert "reused or unsolicited" in response.text
+    assert "expired or reused" in response.text
     env.google.fail_exchange = True
     params = begin(env)
     response = env.client.get(
@@ -381,7 +387,7 @@ def test_secure_store_and_refresh_failures_are_redacted(setup, failure):
             response = load(env)
     assert env.service.connection is None and not saved(env.service)
     assert (
-        "no plaintext fallback" in response.text
+        ".env file cannot be read or written safely" in response.text
         if failure != "refresh"
         else "Reconnect Gmail" in response.text
     )
@@ -411,7 +417,7 @@ def test_account_isolation_disconnect_and_restart_restore(setup):
     assert env.service.key not in env.store.values and "desktop-client" in env.store.values
     assert not env.service.pending and not saved(env.service)
     post(env, "/gmail/disconnect")  # idempotent
-    assert "disconnected locally" in env.client.get("/gmail").text
+    assert "Gmail disconnected" in env.client.get("/gmail").text
 
 
 @pytest.mark.parametrize(
@@ -449,9 +455,10 @@ def test_zero_partial_errors_limits_cycles_and_safe_html(setup):
     env.google.body = (
         '<p>Untrusted mail</p><img src="https://tracking.invalid/x"><script>execute()</script>'
     )
-    response = load(env)
-    assert "Untrusted mail" in response.text and "tracking.invalid" not in response.text
-    assert "execute()" not in response.text
+    load(env)
+    inbox = env.client.get("/saved?month=2025-02").text
+    assert "Untrusted mail" in inbox and "tracking.invalid" not in inbox
+    assert "execute()" not in inbox
     env.google.pages = {None: {"messages": [{"id": "mail1"}], "nextPageToken": "more"}}
     assert "Incomplete month" in load(env, pages="1").text
     env.google.pages = {
@@ -478,7 +485,8 @@ def test_zero_partial_errors_limits_cycles_and_safe_html(setup):
 
 
 @pytest.mark.parametrize(
-    "path", ["/gmail/connect", "/gmail/month", "/gmail/restore", "/gmail/disconnect"]
+    "path",
+    ["/gmail/connect", "/gmail/month", "/gmail/restore", "/gmail/disconnect", "/gmail/cancel"],
 )
 def test_gmail_mutations_keep_host_origin_csrf_protection(setup, path):
     env = setup
@@ -505,7 +513,7 @@ def test_gmail_mutations_keep_host_origin_csrf_protection(setup, path):
     assert "form-action 'self'" in response.headers["content-security-policy"]
 
 
-def test_configuration_pins_endpoints_and_never_uses_native_fallback(setup, monkeypatch):
+def test_configuration_pins_endpoints_and_reports_missing_client(setup):
     env = setup
     config = json.loads(CONFIG)
     config["installed"]["token_uri"] = "https://evil.invalid"
@@ -514,13 +522,11 @@ def test_configuration_pins_endpoints_and_never_uses_native_fallback(setup, monk
         == "https://oauth2.googleapis.com/token"
     )
     for raw in ('{"web":{}}', "{}", "{", '{"installed":{"client_id":"bad","client_secret":"s"}}'):
-        with pytest.raises(GmailProblem, match="Invalid Google Desktop"):
+        with pytest.raises(GmailProblem, match="Invalid Google client"):
             configure_google(env.store, raw)
     env.store.values.clear()
-    assert "not configured" in post(env, "/gmail/connect").text
-    for operation, args in (("get", ("key",)), ("put", ("key", "fake")), ("delete", ("key",))):
-        with pytest.raises(GmailProblem, match="Secure OS credential store"):
-            getattr(NativeStore(), operation)(*args)
+    assert "Google client not configured" in post(env, "/gmail/connect").text
+    assert env.service.pending == {} and not env.google.calls
 
 
 def test_unexpected_scope_and_restore_mismatch_rejected(setup):

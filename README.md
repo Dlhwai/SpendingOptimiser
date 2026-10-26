@@ -5,7 +5,7 @@ A planned personal spending tracker for maximizing credit-card rewards while kee
 **Status: deterministic desktop monthly views, account-scoped saved Gmail candidates, and the local import/review ledger are implemented. Monthly loading is explicit, bounded and resumable. All page views read saved data only. OAuth/retrieval are synthetic-tested; live Gmail still needs your setup and consent. An optional, restricted subscription-backed Codex workflow now analyses only saved official issuer terms captured by the app on request, or allowlisted placeholder structures. Live AI accounts and qualified bank-email extraction have not been verified.**
 
 Start with the [monthly workflow, inclusion rules and safe preview](docs/monthly.md).
-[Storage & archives](docs/storage.md) keeps historical financial views readable,
+[Storage](docs/storage.md) keeps historical financial views readable,
 retains the current Singapore month plus two preceding mail months uncompressed,
 and losslessly compresses eligible older detail only above 1,000,000,000 bytes.
 This is not deletion, encryption or a hard storage cap.
@@ -45,14 +45,20 @@ After `uv sync --locked`, start the loopback-only service:
 uv run --locked spending-optimiser
 ```
 
-Open **http://127.0.0.1:8765** to choose a calendar month, inspect canonical
-transactions and view purchase charts by explicit card/account/avenue and event
-date. Separate currencies and unsigned event kinds are never netted. **Mail inbox**
-guides Gmail setup, month selection and explicit Load / Continue / Refresh. For an offline walkthrough, choose **Import data**,
-click **Import bundled synthetic example**, then open **Review queue** to inspect
-evidence and correct/review the purchase. No credentials,
-real financial data, model, or Internet access are needed after dependency installation.
-Ledger refresh rereads the local database. Gmail has separate Connect and Load/Refresh mail actions; sign-in never loads mail automatically.
+Open **http://127.0.0.1:8765**. The sidebar has three steps:
+
+1. **Connect Gmail**: sign in through a Google window opened from the app, then
+   explicitly Load / Continue / Refresh a calendar month. Sign-in never loads mail.
+2. **Inspect saved data**: saved mail, transactions, review queue, card evidence,
+   data import and storage as tabs.
+3. **Understand this month**: canonical transactions and purchase charts by explicit
+   card/account/avenue and event date, plus the optional Safe AI analysis tab.
+   Separate currencies and unsigned event kinds are never netted.
+
+For an offline walkthrough, choose step 2 > **Import data**, click **Import bundled
+synthetic example**, then open **Review queue** to inspect evidence and correct/review
+the purchase. No credentials, real financial data, model, or Internet access are needed
+after dependency installation. Ledger refresh rereads the local database.
 
 Data defaults to `~/.local/share/spending-optimiser/ledger.sqlite3`. Override with
 `--database /absolute/private/path/ledger.sqlite3` or `SPENDING_OPTIMISER_DB`.
@@ -60,7 +66,7 @@ See [local setup, full synthetic walkthrough, storage/review guarantees, and lim
 
 ## Gmail adapter
 
-See [exact Google Cloud/client setup, connect/load/disconnect, privacy and limits](docs/gmail.md). Gmail sign-in uses Google's Desktop authorization-code flow with PKCE, native OS credential storage, and a loopback callback. Save a Singapore-time calendar month (UTC+08:00) in bounded pages only when you request it; Continue until the query is exhausted. Undecodable messages are kept as unresolved IDs with a targeted retry, so later pages still load. Candidates and checkpoints persist by stable Google account identity, separate from ledger facts. Incomplete retrieval is labeled; exhaustion is not proof of financial coverage. Disconnect hides saved mail and forgets authorization, not the local cache. Saved mail is readable local SQLite with no app-level encryption and no deletion action.
+See [exact Google Cloud/client setup, connect/load/disconnect, privacy and limits](docs/gmail.md). Gmail sign-in uses Google's Desktop authorization-code flow with PKCE and a loopback callback, started only by the Connect button. The Google client and saved authorization live in the gitignored `.env` (plaintext, owner-only, not encryption; see `.env.example`). Save a Singapore-time calendar month (UTC+08:00) in bounded pages only when you request it; Continue until the query is exhausted. Undecodable messages are kept as unresolved IDs with a targeted retry, so later pages still load. Candidates and checkpoints persist by stable Google account identity, separate from ledger facts. Incomplete retrieval is labeled; exhaustion is not proof of financial coverage. Disconnect hides saved mail and forgets authorization, not the local cache. Saved mail is readable local SQLite with no app-level encryption and no deletion action.
 Run the synthetic example without credentials or network access:
 
 ```sh
@@ -68,10 +74,11 @@ uv run --locked python examples/gmail_synthetic.py
 ```
 
 Live Gmail and actual bank-notification compatibility have **not** been verified.
-The app implements consent, refresh and native-only credential storage; the standalone
-adapter still does not read/change stores. Follow the setup guide to import your
-Desktop client JSON privately with `--configure-google`, then start the app and
-choose **Mail inbox > Connect Gmail**. No credentials are needed for offline imports.
+The app implements consent, refresh and `.env` credential storage; the standalone
+adapter still does not read/change stores. Follow the setup guide to put your
+Desktop client ID and secret in `.env` (or import the JSON with `--configure-google`),
+then start the app and choose **Connect Gmail**. No credentials are needed for
+offline imports.
 
 ## Safe synthetic monthly desktop preview
 
@@ -81,15 +88,16 @@ uv run --locked python examples/monthly_preview.py --port 8877 --state partial
 
 Open **http://127.0.0.1:8877/?month=2025-02** for fictional corrected ledger facts,
 separate SGD/JPY/KWD/USD charts and an incomplete mail scan. Continue loading in
-Mail inbox to exhaust it. Use `--state full` or `--state empty` for other states.
-The seeded ledger is **not AI-extracted mail**. Every dependency is fake; no native
-credentials, real mail, default ledger or external model is touched. Ctrl-C removes
+Connect Gmail to exhaust it. Use `--state full` or `--state empty` for other states.
+The seeded ledger is **not AI-extracted mail**. Every dependency is fake; no real
+`.env`, credentials, real mail, default ledger or external model is touched. Ctrl-C removes
 the disposable database. [Exact fixture counts and limits](docs/monthly.md).
 
 ## Subscription-backed safe AI
 
-Choose **Safe AI analysis** to connect an eligible ChatGPT session through a pinned,
-restricted official Codex client, capture official issuer terms on request or save
+Choose **Safe AI analysis** (step 3) and **Connect ChatGPT**; the same kind of sign-in
+window connects an eligible ChatGPT session through a pinned, restricted official
+Codex client (its tokens stay in the client's own keyring, not `.env`). Capture official issuer terms on request or save
 an allowlisted placeholder structure, inspect the exact safe input, explicitly request analysis,
 and review a versioned proposal. Accepted format layouts parse loaded mail locally
 into unsaved, review-pending proposals; nothing changes ledger facts automatically.
@@ -106,12 +114,15 @@ uv run --locked python examples/ui_preview.py --port 8876
 ```
 
 Open **http://127.0.0.1:8876**. This runs the actual UI against a fresh disposable
-database, in-memory fake credential store, local synthetic consent page and fake
-Gmail transport, fake AI subscription and fake model. It never reads your normal
-ledger or OS credentials and makes no Google or model-provider requests. Every screen is labeled synthetic. Use `--unconfigured` to inspect
-the setup-required state or `--populated` for the bundled ledger example. Connect,
-approve synthetic consent, choose February 2025, then Load month for four fictional
-candidates, including long text. Ctrl-C removes the temporary database. Port 8765 is explicitly refused.
+database, a temporary `.env`, local synthetic consent pages, a fake Gmail transport,
+a fake AI subscription and a fake model. It never reads your normal ledger, `.env` or
+OS credentials and makes no Google or model-provider requests. Every screen is labeled
+synthetic. Use `--unconfigured` to inspect the missing-client state, `--ai-signed-out`
+to walk through the ChatGPT sign-in window, or `--populated` for the bundled ledger
+example. Connect, approve synthetic consent in the sign-in window, choose February
+2025, then Load month for four fictional candidates, including long text, and
+inspect them in step 2. Ctrl-C removes the temporary database and `.env`. Port 8765 is
+explicitly refused.
 
 ## Technical direction
 

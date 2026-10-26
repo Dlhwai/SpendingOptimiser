@@ -1,13 +1,17 @@
 {% extends 'base.html' %}
+{% from 'components.html' import inspect_tabs %}
+{% set step = 2 %}
 {% block title %}Import data{% endblock %}
 {% block content %}
-<div class="page-head"><div><p class="eyebrow">OFFLINE & DUPLICATE-SAFE</p><h1>Bring your data with you.</h1><p class="muted">Import validated ledger snapshots, or explore the workflow with a synthetic example. No connection or credentials needed.</p></div></div>
+<div class="page-head"><div><p class="eyebrow">Step 2 of 3</p><h1>Import data</h1></div></div>
+{{ inspect_tabs('import') }}
 <div class="split">
-<section class="card"><h2>Import a schema document</h2><p class="muted small">Self-contained format 1.0 JSON only. Maximum 2 MiB including form overhead. This is a snapshot importer, not an email parser.</p>
+<section class="card"><h2>Import a schema document</h2>
 <form action="/import" method="post" enctype="multipart/form-data"><input type="hidden" name="csrf" value="{{ csrf }}">
-<div class="form-field"><label for="file">JSON file</label><input id="file" name="file" type="file" accept=".json,application/json" aria-describedby="import-hint"><p id="import-hint" class="field-hint">Choose a file or paste JSON below, not both.</p></div>
+<div class="form-field"><label for="file">JSON file</label><input id="file" name="file" type="file" accept=".json,application/json"></div>
 <details class="disclosure"><summary>Paste schema-document JSON instead</summary><label for="document">Schema-document JSON</label><textarea id="document" name="document" placeholder='{"schema_version":"1.0", "transactions":[]}'></textarea></details>
-<p class="subtle-note">A failed import saves nothing. Duplicate identities must match exactly. Later imports cannot extend locally reviewed events.</p><button type="submit">Import document atomically</button></form></section>
-<section class="card"><span class="badge pending">Synthetic data only</span><h2 style="margin-top:18px">Take a look around.</h2><p class="muted small">Try one fictional purchase, source evidence and unverified public card-rule examples. Then inspect a fact, save a correction and record your review.</p><p class="muted small">All bundled data is synthetic. Card names are unresolved labels, not researched terms. No real account or email is involved.</p><form action="/example" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary" type="submit">Import bundled synthetic example</button></form><p class="subtle-note">Safe to repeat. Exact reimports don't duplicate events or replace your corrections.</p></section>
-</div><p class="subtle-note">Next: <a href="/ledger">view transactions</a> or <a href="/gmail">connect Gmail</a> to inspect mail separately.</p>
+<button type="submit">Import document atomically</button></form></section>
+<section class="card"><span class="badge pending">Synthetic data only</span><h2 style="margin-top:18px">Synthetic example</h2>
+<form action="/example" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary" type="submit">Import bundled synthetic example</button></form></section>
+</div>
 {% endblock %}

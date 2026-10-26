@@ -6,8 +6,9 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from .dotenv_store import DotenvFile, default_env_path
 from .gmail import AuthenticationFailure, GmailAdapter, GmailRestClient
-from .gmail_auth import GmailProblem, GoogleOAuth, NativeStore, client_config
+from .gmail_auth import EnvStore, GmailProblem, GoogleOAuth, client_config
 from .mail_cache import MailCache, fresh_state
 from .monthly import SINGAPORE, calendar_month
 
@@ -26,7 +27,7 @@ class Pending:
 
 class GmailService:
     def __init__(self, database, *, store=None, oauth=None, client_factory=None, clock=None):
-        self.store = store if store is not None else NativeStore()
+        self.store = store if store is not None else EnvStore(DotenvFile(default_env_path()))
         self.oauth = oauth if oauth is not None else GoogleOAuth()
         self.client_factory = client_factory if client_factory is not None else GmailRestClient
         self.clock = clock if clock is not None else time.monotonic
@@ -36,11 +37,12 @@ class GmailService:
         self.connection = None
         self.connection_id = secrets.token_urlsafe(24)
         self.notice_month = None
-        self.notice = (
-            "Disconnected. Connect Gmail or restore your saved connection; "
-            "mail loads only on request."
-        )
+        self.notice = None
         self.problem = None
+        # Sign-in progress for the browser. `attempt` changes on every Connect request;
+        # `busy` spans begin/callback so a poll never sees a half-finished attempt as idle.
+        self.attempt = 0
+        self.busy = 0
 
     def config(self):
         raw = self.store.get("desktop-client")
@@ -52,12 +54,27 @@ class GmailService:
         self.connection = None
         self.connection_id = secrets.token_urlsafe(24)
         self.notice_month = None
-        self.notice = "Disconnected. Mail hidden; saved mail remains on this device."
+        self.notice = None
+
+    def attempted(self, action, *args):
+        """Run a sign-in step, recording its failure before it stops counting as busy."""
+        self.busy += 1
+        try:
+            return action(*args)
+        except GmailProblem as exc:
+            self.problem = exc.code
+            raise
+        finally:
+            self.busy -= 1
 
     def begin(self, session, redirect):
+        self.attempt += 1
+        return self.attempted(self._begin, session, redirect)
+
+    def _begin(self, session, redirect):
         config = self.config()
         now = self.clock()
-        self.pending = {k: v for k, v in self.pending.items() if v.expires > now}
+        self.pending = {k: v for k, v in list(self.pending.items()) if v.expires > now}
         if len(self.pending) >= 32:
             raise GmailProblem("oauth_failed")
         flow, url, state, nonce = self.oauth.begin(config, redirect)
@@ -68,6 +85,9 @@ class GmailService:
         return url
 
     def callback(self, session, params, redirect):
+        return self.attempted(self._callback, session, params, redirect)
+
+    def _callback(self, session, params, redirect):
         pending = self.pending.get(session)
         state = params.get("state", "")
         if (
@@ -91,7 +111,20 @@ class GmailService:
         self.pending.clear()  # another tab cannot replace the newly selected account
         self.connection = connection
         self.problem = None
-        self.notice = "Connected. No mail fetched. Choose a calendar month and Load month."
+
+    def status(self, session):
+        """In-memory progress only: no store, network or mail access."""
+        pending = self.pending.get(session)
+        if pending is not None and pending.expires <= self.clock():
+            self.pending.pop(session, None)
+            self.problem = "expired"
+            pending = None
+        waiting = bool(self.busy) or pending is not None
+        return {"attempt": self.attempt, "state": "pending" if waiting else "idle"}
+
+    def cancel(self, session):
+        if self.pending.pop(session, None) is not None:
+            self.problem = "cancelled"
 
     def restore(self):
         config = self.config()
@@ -103,10 +136,7 @@ class GmailService:
         self.pending.clear()
         self.connection = connection
         self.problem = None
-        self.notice = (
-            "Saved connection restored, not yet verified with Google. "
-            "Select Load month to refresh authorization."
-        )
+        self.notice = "Saved connection restored. Not yet verified with Google."
 
     def disconnect(self):
         self.clear()
@@ -155,7 +185,7 @@ class GmailService:
         state = fresh_state() if action == "refresh" else self.cache.state(namespace, month)
         self.notice_month = month.key
         if action == "continue" and state["exhausted"]:
-            self.notice = "Month query already exhausted. Refresh month to check for new mail."
+            self.notice = "Month already exhausted. Refresh month to check for new mail."
             return
         adapter = GmailAdapter(self.client_factory(self), namespace)
         self.problem = None
@@ -220,20 +250,7 @@ class GmailService:
                 self.cache.save(namespace, month, state, found)
                 if state["errors"] or state["exhausted"]:
                     break
-        count = len(self.cache.candidates(namespace, month))
-        failed = len(state["failed"])
-        self.notice = (
-            f"{count} saved candidates for {month.label}; {state['pages']} pages completed; "
-            f"{state['duplicates']} duplicate IDs skipped; {failed} unresolved messages. "
-            + (
-                "Query exhausted, but unresolved messages are not saved. "
-                "Retry failed messages; coverage is incomplete."
-                if state["exhausted"] and failed
-                else "Query exhausted, not proof of complete financial coverage."
-                if state["exhausted"]
-                else "Incomplete month. Continue loading or retry; totals are saved ledger only."
-            )
-        )
+        self.notice = None  # Counts and coverage are rendered from the saved scan state.
 
     def verify(self, connection, errors):
         if connection is not self.connection or any(

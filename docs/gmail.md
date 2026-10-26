@@ -1,10 +1,10 @@
 # Read-only Gmail candidate adapter
 
-The read-only adapter is now connected to the loopback browser application's
-Google sign-in and explicit mail-loading actions. **Implementation and synthetic
+The read-only adapter is connected to the loopback browser application's Google
+sign-in window and explicit mail-loading actions. **Implementation and synthetic
 end-to-end checks are complete; live Google consent, Gmail access and actual
 bank-notification compatibility have not been verified.** No personal credentials,
-inbox or OS credential entries were used during development/tests.
+inbox, real `.env` or OS credential entries were used during development/tests.
 
 ```sh
 uv sync --locked
@@ -162,29 +162,46 @@ into chat, Git, an issue, logs, or a screenshot.
    sends exactly `http://127.0.0.1:<running-port>/gmail/callback` (default port 8765),
    using its existing loopback listener. The exchange uses that same redirect.
    This is not the deprecated OOB/copy-paste flow. Never expose it via a tunnel.
-5. Keep the downloaded JSON temporarily in an owner-only location **outside this
-   repository** (for example, a private temporary folder with mode 0700 and file
-   mode 0600). Import it directly into the native OS credential store:
+5. Put the client in the application's gitignored `.env`: the file in this application
+   folder (next to `pyproject.toml`), wherever the app is started from.
+   Copy the two values yourself (see `.env.example`):
+
+   ```sh
+   SPENDING_GOOGLE_CLIENT_ID='...apps.googleusercontent.com'
+   SPENDING_GOOGLE_CLIENT_SECRET='...'
+   ```
+
+   or let the app write them from the downloaded JSON, kept temporarily outside this
+   repository, and then delete that file:
 
    ```sh
    uv sync --locked
    uv run --locked spending-optimiser --configure-google < /absolute/private/path/client.json
    ```
 
-   This reads bounded JSON from stdin, stores only the Desktop client settings in
-   the native store, and exits without starting the server. It never creates a
-   plaintext token/config file. Delete the downloaded file after successful import
-   and protect any retained backup. Avoid shell tracing and debug/HTTP logging.
-   No secrets belong in environment variables, command-line arguments or `.env`.
+   Without these values the Connect action reports the missing configuration and
+   starts nothing; the app never invents or registers a client for you.
 
-The `keyring` integration selects only **macOS Keychain**, **Windows Credential
-Manager**, or **Linux Secret Service** for the running platform. Unlock the native
-store first; on Linux run inside a session with a working Secret Service/D-Bus
-provider. A headless or locked/unavailable backend returns
-`secure_store_unavailable` and exit code 2 for configuration. There is no
-plaintext/chainer/fallback backend, and tests never touch native entries. Keychain
-may ask the OS user to approve access. Do not install a plaintext fallback to
-bypass an error.
+### The `.env` credential file
+
+The app stores its Google client and the saved Gmail authorization (refresh token) in
+`.env`. **This is plaintext, not encryption**, and it replaces the earlier native
+OS credential store for Gmail; old Keychain entries are not read or migrated.
+Google and OpenAI account passwords are never stored, and transient authorization
+codes, PKCE verifiers and sessions stay in process memory.
+
+- The file is parsed with python-dotenv's real parser: no shell sourcing, no `${}`
+  interpolation, and nothing is exported to the process environment or to the GPT
+  client.
+- Updates are one bounded, atomic read-modify-write (256 KiB file, 16 KiB value). The
+  new file is owner-only (mode 0600), a looser hand-edited file is tightened when
+  read, and symlinks, non-regular files and files owned by another user are refused.
+  A failed update leaves the old file untouched. Comments, other settings and layout
+  are preserved.
+- Connect writes `SPENDING_GMAIL_AUTHORIZATION_<ledger digest>`, so each ledger
+  keeps its own authorization. Disconnect removes only that variable.
+- Do not commit, paste or screenshot the file. Back it up as you would a password
+  file.
 
 ### Provider testing and verification restrictions
 
@@ -215,43 +232,46 @@ Unlike Google's quickstart example, this app does **not** write `token.json`.
 uv run --locked spending-optimiser
 ```
 
-1. Open **http://127.0.0.1:8765**, then **Mail inbox**. The overview also has a
-   **Set up Gmail** shortcut. Expand **One-time Google setup** for the concise
-   local configuration checklist; a missing-client response opens it automatically.
-   With a custom `--port`, use that port consistently; do not substitute `localhost`
-   for sign-in.
-2. Choose **Connect Gmail**, then **Continue to Google**. Sign in and consent only
-   on Google's page in the same browser profile. The app never collects a Gmail
-   password. The attempt expires after 10 minutes; a new attempt replaces the old
-   one for that browser. Cancelled/denied/invalid callbacks load nothing.
-3. After the clean redirect back, check the displayed account address. **No mail
-   is fetched on sign-in or startup**. Profile lookup retrieves only your Gmail
-   account identity. OpenID supplies a verified stable Google `sub`, so email
-   address changes do not merge identities. No extra profile/email scopes are
-   needed. A namespace hashes that `sub`; message identities also include the
-   Gmail message ID, never the thread or financial amount.
-4. Select a **calendar month**, then **View saved month** to read local data only.
-   Choose **1-5 pages per action** (default 2, 20 IDs/page) and **Load month**.
-   The fixed query uses explicit epoch boundaries for Singapore-time midnights
-   (UTC+08:00), excluding spam/trash; a local half-open Singapore receipt-time
-   filter enforces the exact month. Duplicates
-   count toward the action bound. **Continue / retry month** resumes until the
-   query is genuinely exhausted, including successful empty nonterminal pages.
-   Partial failures retain successes and retry the same unadvanced page with
-   resolved IDs skipped. A proven per-message failure (`invalid_message` or
-   `response_too_large`) is retained as an unresolved ID so later pages still
-   load; **Retry failed messages** re-fetches only those IDs. Listing, network,
-   rate-limit and auth failures never advance. Errors, cycles and unresolved
-   messages stay incomplete, never empty or complete success. Refresh restarts an expired/cycled token. No automatic retries,
-   whole-mailbox scans, scheduler or background polling exist. See [monthly.md](monthly.md).
-5. Candidate rows show sender, subject and Gmail receipt time. Expand a row to
-   view the complete subject, unverified headers and escaped
-   normalized text. HTML is never executed, images never loaded, URLs never
-   followed and embedded instructions never acted upon. Display is capped at
-   10,000 characters per candidate with a size notice. Accepted format layouts
-   match saved candidates locally and deterministically into unsaved, review-pending
-   Mail proposals. No model is called, nothing is added to the ledger and review
-   decisions and financial facts remain unchanged.
+The sidebar has three steps: **1 Connect Gmail**, **2 Inspect saved data** and
+**3 Understand this month**. Nothing signs in at startup or when a page is opened.
+
+1. Open **http://127.0.0.1:8765** and choose **Connect Gmail**. With a custom
+   `--port`, use that port consistently; do not substitute `localhost` for sign-in.
+2. Choose **Connect Gmail** (or **Change account**). The app opens one Google sign-in
+   window. Sign in and consent only on Google's page; the app never collects a Gmail
+   password. If the browser blocks the window, an alert offers **Continue in this
+   window**, which does the same flow in the current tab. **Cancel sign-in** ends an
+   attempt, and an attempt expires after 10 minutes. Cancelled, denied or invalid
+   callbacks load nothing. Closing the window is not a connection: the app shows
+   **Connected** only after the verified callback.
+3. The window reports the result and closes where the browser allows it; the app
+   page updates by asking its own status endpoint, with no messages between windows.
+   **No mail is fetched on sign-in or startup.** Profile lookup retrieves only your
+   Gmail account identity. OpenID supplies a verified stable Google `sub`, so email
+   address changes do not merge identities. A namespace hashes that `sub`; message
+   identities also include the Gmail message ID, never the thread or financial amount.
+4. Select a **calendar month** (Singapore time), then **Load month**. **Pages per
+   action** is 1-5 (default 2, 20 IDs/page). The fixed query uses explicit epoch
+   boundaries for Singapore-time midnights (UTC+08:00), excluding spam/trash; a local
+   half-open Singapore receipt-time filter enforces the exact month. Duplicates
+   count toward the action bound. **Continue month** resumes until the query is
+   genuinely exhausted, including successful empty nonterminal pages. Partial
+   failures retain successes and retry the same unadvanced page with resolved IDs
+   skipped. A proven per-message failure (`invalid_message` or `response_too_large`)
+   is retained as an unresolved ID so later pages still load; **Retry failed
+   messages** re-fetches only those IDs. Listing, network, rate-limit and auth
+   failures never advance. Errors, cycles and unresolved messages stay incomplete,
+   never empty or complete success. **Refresh month** restarts an expired/cycled
+   token. No automatic retries, whole-mailbox scans, scheduler or background polling
+   exist. See [monthly.md](monthly.md).
+5. **Inspect saved data** lists the month's candidates with sender, subject and Gmail
+   receipt time. Expand a row to view the complete subject, unverified headers and
+   escaped normalized text. HTML is never executed, images never loaded, URLs never
+   followed and embedded instructions never acted upon. Display is capped at 10,000
+   characters per candidate with a size notice. Accepted format layouts match saved
+   candidates locally and deterministically into unsaved, review-pending proposals.
+   No model is called, nothing is added to the ledger and review decisions and
+   financial facts remain unchanged.
 6. **Refresh month** restarts this month's query with bounded pages, retaining
    saved candidates and deduplicating by stable account/message identity. Changed
    content versions are preserved. Continue until exhausted again; previous
@@ -259,13 +279,13 @@ uv run --locked spending-optimiser
    is not erased from saved data. This is not a snapshot or financial completeness
    guarantee. The last query-action time, completed-page/duplicate counts and
    unresolved messages are visible. Retries do not inflate these counts.
-7. Under **Connection settings & privacy**, **Disconnect Gmail / forget saved
-   authorization** hides saved mail, cancels pending sign-ins and deletes this database's refresh authorization from
-   the OS store. It is idempotent. If deletion fails, the UI is disconnected but
-   explicitly reports that the saved credential could remain; unlock and retry.
-   Client configuration stays for later connections. To revoke the grant at
-   Google as well, remove it under your Google Account's third-party connections.
-   Local disconnect does not make a provider revocation request or modify mail.
+7. **Disconnect Gmail** hides saved mail, cancels pending sign-ins and removes this
+   ledger's saved authorization from `.env`. It is idempotent. If `.env` cannot be
+   updated, the UI is disconnected but reports the failure and the saved credential
+   could remain; fix the file and retry. The client settings stay for later
+   connections. To revoke the grant at Google as well, remove the app under your
+   Google Account's third-party connections. Local disconnect does not make a
+   provider revocation request or modify mail.
 
 Refresh authorization is real `google-auth`; the authorization-code exchange and
 S256 PKCE are handled by `google-auth-oauthlib`/OAuthlib. State, verifier, nonce,
@@ -276,24 +296,25 @@ Existing Strict form-CSRF, Origin, Host, CSP and loopback protections remain.
 Callback codes/errors are never rendered and immediately redirect to `/gmail`
 without query parameters and with no-referrer. Access logging is disabled.
 
-Access/ID tokens live only in process memory. Refresh tokens and client secrets
-remain only in the native store under service `spending-optimiser.gmail`. The
-client entry is shared by this OS app; saved authorization is keyed by the
-absolute ledger-path digest. **Monthly mail and checkpoints persist as readable
-SQLite data with no app-level encryption**, scoped by stable Google identity,
-including headers, message text, every retained content version, failed-message
-IDs and successful-ID/page-token continuation. Existing ledger records stay intact.
-Local database format 2 supports verified compressed payloads, not encryption;
-JSON schema stays 1.0. Protect disk/backups. [Storage & archives](storage.md)
-keeps the current Singapore month plus preceding two mail months uncompressed,
-losslessly compresses eligible older detail above 1 decimal GB, and can restore
-a selected account/month locally. Saved mail is retained indefinitely; there is
-no purge or deletion action. Disconnect does not remove the local cache or ledger history, only
-visible access and authorization.
+Access/ID tokens live only in process memory. The refresh token and client secret
+remain in `.env` (see above), keyed per ledger path digest. The sign-in window needs
+one same-origin script (`script-src 'self'`, `connect-src 'self'`); the Content
+Security Policy otherwise stays `default-src 'none'`, and every app response sets
+`Cross-Origin-Opener-Policy: same-origin` so provider pages keep no handle to the app.
+**Monthly mail and checkpoints persist as readable SQLite data with no app-level
+encryption**, scoped by stable Google identity, including headers, message text,
+every retained content version, failed-message IDs and successful-ID/page-token
+continuation. Existing ledger records stay intact. Local database format 2 supports
+verified compressed payloads, not encryption; JSON schema stays 1.0. Protect
+disk/backups. [Storage](storage.md) keeps the current Singapore month plus
+preceding two mail months uncompressed, losslessly compresses eligible older detail
+above 1 decimal GB, and can restore a selected account/month locally. Saved mail is
+retained indefinitely; there is no purge or deletion action. Disconnect does not
+remove the local cache or ledger history, only visible access and authorization.
 
-Restart hides mail and clears browser sessions, without accessing the credential
-store or network. Use **Restore saved connection** to read the native store and
-view only that identity's saved mail (no network/mail retrieval yet). Loading then
+Restart hides mail and clears browser sessions, without reading `.env` or the
+network. Use **Restore saved connection** to read the saved authorization and view
+only that identity's saved mail (no network/mail retrieval yet). Loading then
 refreshes/verifies authorization. Revoked or expired refresh/API authentication
 hides mail and asks you to reconnect. Other API/permission/rate-limit failures are
 explicit, not empty success. Switching accounts hides the prior cache; stale
@@ -310,22 +331,24 @@ account-backed AI verification and real-bank format qualification remain unverif
 
 ## Validation readiness versus live verification
 
-`uv run --locked pytest tests/test_gmail_login.py` exercises production OAuth
-library exchange/refresh mechanics, the existing Gmail REST adapter and browser
-endpoints against fake HTTP and stores. Tests cover cancellation/failure,
-state/session/host/expiry/replay, nonce/scope rejection, secure-store errors,
-account switches/disconnect/restart, pagination/duplicates/month and page limits,
-0/partial/API failures, escaped content and unchanged offline ledger data.
-The synthetic Chrome walkthrough uses an injected mock consent page and fake
-transport/store, not real Google sign-in or OS entries. Reproduce it with
+`uv run --locked pytest tests/test_gmail_login.py tests/test_connect_flow.py
+tests/test_dotenv_store.py` exercises production OAuth library exchange/refresh
+mechanics, the existing Gmail REST adapter, the sign-in window flow (popup,
+same-window fallback, cancel, denial, expiry, missing client) and the `.env` store
+against fake HTTP, temporary dotenv files and disposable databases. Tests cover
+state/session/host/expiry/replay, nonce/scope rejection, `.env` escaping, file
+protection, atomic failure and per-ledger isolation, account switches/disconnect/
+restart, pagination/duplicates/month and page limits, 0/partial/API failures,
+escaped content and unchanged offline ledger data. `tests/test_provider_script.py`
+runs the real sign-in script (needs Node) against a recording browser stand-in. The
+synthetic Chrome walkthrough uses a mock consent page and fake transport, not real
+Google sign-in. Reproduce it with
 `uv run --locked python examples/ui_preview.py --port 8876`; see the README.
-The UI additionally tests navigation, configuration-required guidance, candidate
-headers/truncation, the selected month, offline imports and the review journey.
 
-**Still requires the user:** perform Cloud/client setup above, approve native
-credential-store access, complete explicit Google browser consent, verify one
-small month load, refresh, restart/restore and disconnect with the real
-account. Also verify month continuation and persisted saved mail after restore.
-No live-account smoke verification or qualified real-bank extraction is
-claimed. Keep any real mail/screenshots outside Git and chat. Missing credentials
-do not prevent the implemented offline tests or offline ledger workflow.
+**Still requires the user:** perform the Cloud/client setup above, put the client in
+`.env`, complete explicit Google consent from the app's Connect action, and verify
+one small month load, refresh, restart/restore and disconnect with the real account.
+Also verify month continuation and persisted saved mail after restore. No
+live-account smoke verification or qualified real-bank extraction is claimed. Keep
+any real mail/screenshots outside Git and chat. Missing credentials do not prevent
+the implemented offline tests or offline ledger workflow.

@@ -521,7 +521,7 @@ def test_import_cannot_extend_manual_head_even_with_complete_history(ledger, pay
     assert heads(ledger.load()) == [manual]
 
 
-def test_cli_loopback_and_configuration(tmp_path, monkeypatch):
+def test_cli_loopback_and_configuration(tmp_path, monkeypatch, application):
     from spending_optimiser import web
 
     calls = []
@@ -541,7 +541,7 @@ def test_cli_loopback_and_configuration(tmp_path, monkeypatch):
     monkeypatch.setattr("sys.argv", ["spending-optimiser", "--database", str(override)])
     web.main()
     assert calls[-1][0].state.ledger.path == override.resolve()
-    for flags in (["--unknown"], ["--port", "0"], ["--port", "65536"]):
+    for flags in (["--unknown"], ["--port", "0"], ["--port", "65536"], ["--env-file", "x"]):
         monkeypatch.setattr("sys.argv", ["spending-optimiser", *flags])
         with pytest.raises(SystemExit) as error:
             web.main()
