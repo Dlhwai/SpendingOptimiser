@@ -121,11 +121,12 @@ def create_app(
     ledger = Ledger(database or os.environ.get("SPENDING_OPTIMISER_DB", DEFAULT_DB))
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.ledger = ledger
-    env = DotenvFile(env_file if env_file is not None else default_env_path())
     gmail = (
         gmail_service
         if gmail_service is not None
-        else GmailService(ledger.path, store=EnvStore(env))
+        else GmailService(
+            ledger.path, store=None if env_file is None else EnvStore(DotenvFile(env_file))
+        )
     )
     app.state.gmail = gmail
     ai = ai_service if ai_service is not None else AIService(ledger, binary=codex_client)
@@ -704,11 +705,6 @@ def main():
     parser.add_argument(
         "--database", type=Path, help=f"SQLite path (default: {DEFAULT_DB}; env supported)"
     )
-    parser.add_argument(
-        "--env-file",
-        type=Path,
-        help="Gitignored .env for provider settings (default: SPENDING_OPTIMISER_ENV or ./.env)",
-    )
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument(
         "--codex-client",
@@ -717,7 +713,11 @@ def main():
         "docs/subscription-ai.md",
     )
     args = parser.parse_args()
-    env_file = args.env_file if args.env_file is not None else default_env_path()
+    try:
+        env_file = default_env_path()
+    except DotenvError as exc:
+        print(f"error: application folder for .env not found ({exc.reason})", file=sys.stderr)
+        raise SystemExit(2) from None
     if args.configure_google:
         try:
             if sys.stdin.isatty():

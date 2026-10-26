@@ -7,6 +7,7 @@ import os
 import stat
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -305,13 +306,14 @@ def test_secrets_never_reach_arguments_urls_or_the_gpt_child_environment(tmp_pat
 
 
 def test_configure_google_cli_writes_the_env_file_and_reports_bad_input(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, application
 ):
-    path = tmp_path / "cli.env"
+    path = application / ".env"
     path.write_text("UNRELATED=kept\n")
-    monkeypatch.setattr(
-        sys, "argv", ["spending-optimiser", "--configure-google", "--env-file", str(path)]
-    )
+    launch = tmp_path / "launch"
+    launch.mkdir()
+    monkeypatch.chdir(launch)
+    monkeypatch.setattr(sys, "argv", ["spending-optimiser", "--configure-google"])
     monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: False, read=lambda n: CLIENT))
     web.main()
     assert "saved to the .env file" in capsys.readouterr().out
@@ -327,28 +329,110 @@ def test_configure_google_cli_writes_the_env_file_and_reports_bad_input(
         web.main()
     assert error.value.code == 2 and "s3cret" not in capsys.readouterr().err
     assert path.read_bytes() == before
+    assert list(launch.iterdir()) == []
 
 
-def test_codex_client_path_is_read_from_env_only_when_no_flag_is_given(tmp_path, monkeypatch):
+def test_codex_client_path_is_read_from_env_only_when_no_flag_is_given(
+    tmp_path, monkeypatch, application
+):
     calls = []
     monkeypatch.setattr(web.uvicorn, "run", lambda app, **kw: calls.append(app))
-    path = tmp_path / "app.env"
+    path = application / ".env"
     path.write_text(
         "SPENDING_CODEX_CLIENT=/opt/synthetic/codex\nSPENDING_GOOGLE_CLIENT_SECRET=s3cret\n"
     )
     monkeypatch.setenv("SPENDING_OPTIMISER_DB", str(tmp_path / "ledger.sqlite3"))
-    monkeypatch.setattr(sys, "argv", ["spending-optimiser", "--env-file", str(path)])
+    monkeypatch.setattr(sys, "argv", ["spending-optimiser"])
     web.main()
     assert str(calls[-1].state.ai.binary) == "/opt/synthetic/codex"
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["spending-optimiser", "--env-file", str(path), "--codex-client", "/flag/codex"],
-    )
+    monkeypatch.setattr(sys, "argv", ["spending-optimiser", "--codex-client", "/flag/codex"])
     web.main()
     assert str(calls[-1].state.ai.binary) == "/flag/codex"
     for blank in ("", "SPENDING_CODEX_CLIENT=\n"):
         path.write_text(blank)
-        monkeypatch.setattr(sys, "argv", ["spending-optimiser", "--env-file", str(path)])
+        monkeypatch.setattr(sys, "argv", ["spending-optimiser"])
         web.main()
         assert calls[-1].state.ai.binary is None
+
+
+def test_saved_client_and_authorization_follow_the_app_not_the_launch_directory(
+    tmp_path, monkeypatch, application
+):
+    apps = []
+    monkeypatch.setattr(web.uvicorn, "run", lambda app, **kw: apps.append(app))
+    monkeypatch.setenv("SPENDING_OPTIMISER_DB", str(tmp_path / "ledger.sqlite3"))
+    first, second = tmp_path / "home", tmp_path / "other-repository"
+    first.mkdir()
+    second.mkdir()
+    subprocess.run(["git", "init", "-q", str(second)], check=True)
+    monkeypatch.chdir(first)
+    monkeypatch.setattr(sys, "argv", ["spending-optimiser", "--configure-google"])
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: False, read=lambda n: CLIENT))
+    web.main()
+    monkeypatch.setattr(sys, "argv", ["spending-optimiser"])
+    web.main()
+    gmail = apps[-1].state.gmail
+    gmail.store.put(gmail.key, json.dumps({"refresh_token": "synthetic-refresh"}))
+    monkeypatch.chdir(second)
+    web.main()
+    restored = apps[-1].state.gmail
+    assert restored is not gmail and restored.key == gmail.key
+    assert json.loads(restored.store.get(restored.key))["refresh_token"] == "synthetic-refresh"
+    assert json.loads(restored.store.get("desktop-client"))["installed"]["client_secret"] == (
+        "s3cret"
+    )
+    assert list(first.iterdir()) == [] and [p.name for p in second.iterdir()] == [".git"]
+    assert mode(application / ".env") == 0o600
+    subprocess.run(["git", "init", "-q", str(application)], check=True)
+    ignored = subprocess.run(
+        ["git", "-C", str(application), "check-ignore", "-q", ".env"], check=False
+    )
+    assert ignored.returncode == 0
+    status = subprocess.run(
+        ["git", "-C", str(application), "status", "--porcelain", "--untracked-files=all"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert ".env" not in {line[3:] for line in status.splitlines()}
+
+
+def test_this_source_checkout_keeps_its_env_in_its_own_gitignored_root(monkeypatch):
+    from spending_optimiser import dotenv_store
+
+    package = Path(dotenv_store.__file__).resolve().parent
+    monkeypatch.setattr(dotenv_store, "PACKAGE", package)
+    path = dotenv_store.default_env_path()
+    assert path == package.parent.parent / ".env"
+    ignored = subprocess.run(
+        ["git", "-C", str(path.parent), "check-ignore", "-q", "--no-index", ".env"], check=False
+    )
+    assert ignored.returncode == 0
+
+
+def test_an_app_without_its_source_root_refuses_instead_of_writing_elsewhere(
+    tmp_path, monkeypatch, capsys
+):
+    from spending_optimiser import dotenv_store
+
+    installed = tmp_path / "site-packages" / "spending_optimiser"
+    installed.mkdir(parents=True)
+    monkeypatch.setattr(dotenv_store, "PACKAGE", installed)
+    launch = tmp_path / "launch"
+    launch.mkdir()
+    monkeypatch.chdir(launch)
+    monkeypatch.setattr(web.uvicorn, "run", lambda app, **kw: pytest.fail("must not start"))
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: False, read=lambda n: CLIENT))
+    for argv in (["spending-optimiser", "--configure-google"], ["spending-optimiser"]):
+        monkeypatch.setattr(sys, "argv", argv)
+        with pytest.raises(SystemExit) as error:
+            web.main()
+        assert error.value.code == 2
+        assert "no_application_root" in capsys.readouterr().err
+    with pytest.raises(DotenvError):
+        GmailService(tmp_path / "ledger.sqlite3")
+    assert sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*")) == [
+        "launch",
+        "site-packages",
+        "site-packages/spending_optimiser",
+    ]

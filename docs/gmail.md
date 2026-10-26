@@ -162,8 +162,8 @@ into chat, Git, an issue, logs, or a screenshot.
    sends exactly `http://127.0.0.1:<running-port>/gmail/callback` (default port 8765),
    using its existing loopback listener. The exchange uses that same redirect.
    This is not the deprecated OOB/copy-paste flow. Never expose it via a tunnel.
-5. Put the client in the application's gitignored `.env`: the file in the directory
-   you start the app from, or the one named by `--env-file` / `SPENDING_OPTIMISER_ENV`.
+5. Put the client in the application's gitignored `.env`: the file in this application
+   folder (next to `pyproject.toml`), wherever the app is started from.
    Copy the two values yourself (see `.env.example`):
 
    ```sh

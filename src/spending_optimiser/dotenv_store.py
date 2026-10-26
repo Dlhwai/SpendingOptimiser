@@ -11,6 +11,7 @@ import re
 import stat
 import tempfile
 import threading
+import tomllib
 from pathlib import Path
 
 from dotenv.parser import parse_stream
@@ -23,6 +24,7 @@ LEAD = re.compile(r"\s*(?:export[^\S\r\n]+)?")
 ENDING = re.compile(r"(?:\r\n|\n|\r)$")
 BOM = "﻿"
 _LOCK = threading.RLock()
+PACKAGE = Path(__file__).resolve().parent
 
 
 class DotenvError(Exception):
@@ -34,9 +36,15 @@ class DotenvError(Exception):
 
 
 def default_env_path():
-    """SPENDING_OPTIMISER_ENV, else .env in the directory the app was started from."""
-    configured = os.environ.get("SPENDING_OPTIMISER_ENV")
-    return Path(configured) if configured else Path.cwd() / ".env"
+    """The .env in this application's source root, wherever the app is launched from."""
+    root = PACKAGE.parent.parent
+    try:
+        name = tomllib.loads((root / "pyproject.toml").read_text("utf-8"))["project"]["name"]
+    except (OSError, ValueError, KeyError, TypeError):
+        name = None
+    if name != "spending-optimiser" or not (root / ".gitignore").is_file():
+        raise DotenvError("no_application_root")
+    return root / ".env"
 
 
 def quoted(value):
