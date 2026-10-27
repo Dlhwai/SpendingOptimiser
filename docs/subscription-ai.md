@@ -26,14 +26,16 @@ app is disconnected and needs no AI client. For saved-data charts, see the
 - **Retrieval boundary.** HTTPS only, port 443, no credentials in URLs, every hop
   (including redirects, at most 3) must stay on the issuer's listed hosts. Hostnames
   must resolve only to public addresses and the connection is pinned to a checked
-  address. No proxy, cookies, authorization or session headers. Bodies are read in
-  chunks capped at 2 MiB. Every connect, TLS handshake, send and socket read (status
-  line, headers, chunk sizes and body) waits at most 15 s and never past the import's
-  45-second deadline. System hostname resolution uses the OS resolver's timeout,
-  not an interruptible app deadline, so a stalled lookup can exceed 45 seconds;
-  after it returns, an expired budget prevents connecting. There is no background
-  fetch left running after an import returns. Captures made before the deadline
-  are kept. Only
+  address. TLS certificate chain and hostname are verified against the bundled
+  `certifi` CA bundle, not the Python installation's trust store (empty on a
+  python.org interpreter whose certificate step was never run). No proxy, cookies,
+  authorization or session headers. Bodies are read in chunks capped at 2 MiB. Every
+  connect, TLS handshake, send and socket read (status line, headers, chunk sizes and
+  body) waits at most 15 s and never past the import's 45-second deadline. System
+  hostname resolution uses the OS resolver's timeout, not an interruptible app
+  deadline, so a stalled lookup can exceed 45 seconds; after it returns, an expired
+  budget prevents connecting. There is no background fetch left running after an
+  import returns. Captures made before the deadline are kept. Only
   `text/html`/`text/plain` are read, scripts/styles are dropped and extracted text
   over 24,000 characters is refused, as is premature EOF in declared-length or chunked
   HTTP bodies. PDFs, other sites, failed, malformed or oversized documents and searches
@@ -250,6 +252,12 @@ uv run --locked pytest
 uv run --locked ruff check .
 uv run --locked ruff format --check .
 ```
+
+`tests/test_public_terms_tls.py` runs the real terms download over TLS to a loopback
+server with synthetic certificate authorities and an emptied host trust store: the
+old interpreter-default trust fails, the `certifi` bundle connects, and a wrong
+hostname or unknown authority is refused. No real issuer is contacted, and a capture
+from real issuer sites with this change has not been verified.
 
 Next: qualify real public terms and sanitized bank-format evidence without
 broadening the private-data or model-authority boundary.

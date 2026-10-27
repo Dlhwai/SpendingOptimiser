@@ -16,6 +16,7 @@ dependencies = [
     "google-auth==2.62.0",
     "google-auth-oauthlib==1.5.0",
     "requests==2.34.2",
+    "certifi==2026.10.23",
     "itsdangerous==2.2.0",
     "python-dotenv==1.2.4",
 ]

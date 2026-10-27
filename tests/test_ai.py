@@ -609,6 +609,9 @@ def test_https_transport_enforces_remaining_budget_through_tls(monkeypatch, phas
         verify_mode = public_terms.ssl.CERT_REQUIRED
         check_hostname = True
 
+        def __init__(self, *, cafile):
+            assert cafile == public_terms.certifi.where()
+
         def wrap_socket(self, sock, *, server_hostname):
             assert sock is raw and server_hostname == "www.dbs.com.sg"
             # TCP took time: Pinned.connect must re-bound the TLS handshake.
@@ -695,6 +698,9 @@ def test_import_only_persists_complete_parseable_http_documents(
     class FakeTLSContext:
         check_hostname = True
         verify_mode = public_terms.ssl.CERT_REQUIRED
+
+        def __init__(self, *, cafile):
+            assert cafile == public_terms.certifi.where()
 
         def wrap_socket(self, sock, *, server_hostname):
             assert server_hostname == "www.dbs.com.sg"

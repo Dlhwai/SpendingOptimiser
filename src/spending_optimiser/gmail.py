@@ -7,15 +7,18 @@ All content, sender claims, message IDs and pagination tokens are private data.
 import hashlib
 import json
 import re
+import ssl
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
+from functools import cache
 from typing import Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
+import certifi
 from pydantic import TypeAdapter
 
 from ._gmail_mime import Header, InvalidMessage, TextPart, decoded_header, headers, normalize
@@ -101,14 +104,22 @@ class _NoRedirect(HTTPRedirectHandler):
         return None
 
 
+@cache
+def _trusted_context(bundle: str) -> ssl.SSLContext:
+    # Certificate-chain and hostname verification stay on; only the trust anchors are explicit,
+    # so a Python without an installed system CA store (python.org builds) still verifies.
+    return ssl.create_default_context(cafile=bundle)
+
+
 class UrllibGetTransport:
-    """Bounded HTTPS GETs, no redirects/retries/logging, 30-second network timeout."""
+    """Bounded HTTPS GETs verified against certifi, no redirects/retries/logging, 30s timeout."""
 
     def get_json(self, url: str, headers: Mapping[str, str]) -> dict:
         try:
-            with build_opener(_NoRedirect()).open(
-                Request(url, headers=dict(headers)), timeout=30
-            ) as r:
+            opener = build_opener(
+                _NoRedirect(), HTTPSHandler(context=_trusted_context(certifi.where()))
+            )
+            with opener.open(Request(url, headers=dict(headers)), timeout=30) as r:
                 raw = r.read(_MAX_RESPONSE_BYTES + 1)
             if len(raw) > _MAX_RESPONSE_BYTES:
                 raise ClientFailure(IngestionError("response_too_large"))

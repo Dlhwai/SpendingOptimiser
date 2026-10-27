@@ -24,8 +24,10 @@ Import from `spending_optimiser.gmail`:
 - `GmailAdapter(client, namespace=...)`: `fetch_page(query=..., page_token=None,
   page_size=100, seen_ids=())` and `get_candidate(message_id)`.
 - `GmailRestClient(tokens, transport=None)`: concrete HTTPS Gmail REST client.
-  Default transport is `UrllibGetTransport`; `JsonGetTransport.get_json(url,
-  headers)` can be injected. Only list/get requests to `users/me/messages`
+  Default transport is `UrllibGetTransport`, which verifies certificate chain and
+  hostname against the bundled `certifi` CA bundle rather than the Python
+  installation's trust store; `JsonGetTransport.get_json(url, headers)` can be
+  injected. Only list/get requests to `users/me/messages`
   exist. Retrieval requests `format=full`; spam/trash inclusion is disabled.
 - `GmailClient`: injectable list/get protocol for an already authorized SDK
   wrapper. Wrap SDK exceptions in `ClientFailure(IngestionError(...))`,
@@ -351,7 +353,11 @@ escaped content and unchanged offline ledger data. `tests/test_date_range.py` an
 `tests/test_date_range_flow.py` cover single-day, range and calendar-month periods
 (boundaries, leap years, Singapore midnight edges, invalid input, period-scoped
 continuation, retry, refresh and account switching, and historical month data).
-`tests/test_provider_script.py`
+`tests/test_gmail_tls.py` runs Gmail's urllib transport and the final sign-in
+profile request over real TLS to a loopback server with synthetic certificate
+authorities and an emptied host trust store: the `certifi` bundle connects, while a
+wrong hostname, an unknown authority, a redirect and an oversized response are
+refused. `tests/test_provider_script.py`
 runs the real sign-in script (needs Node) against a recording browser stand-in. The
 synthetic Chrome walkthrough uses a mock consent page and fake transport, not real
 Google sign-in. Reproduce it with
@@ -361,8 +367,13 @@ Google sign-in. Reproduce it with
 `.env`, complete explicit Google consent from the app's Connect action, and verify
 one small period load, refresh, restart/restore and disconnect with the real account.
 Also verify continuation and persisted saved mail after restore. A Google sign-in
-problem reported on the installed app is being diagnosed separately; nothing here
-changes sign-in, and passing synthetic tests do not show that it is fixed. No
-live-account smoke verification or qualified real-bank extraction is claimed. Keep
+problem reported on the installed app (the generic "Google authorization failed"
+message appeared after consent) had a reproduced cause in the final Gmail profile
+request: it used the Python installation's trust store, which is empty on a
+python.org interpreter whose certificate step was never run. That request now
+verifies against `certifi`. This is reproduced synthetically only: other stages
+(token exchange, ID-token checks, a Gmail API that is not enabled) show the same
+message, and a real sign-in has not been retried. No live-account smoke
+verification or qualified real-bank extraction is claimed. Keep
 any real mail/screenshots outside Git and chat. Missing credentials do not prevent
 the implemented offline tests or offline ledger workflow.
