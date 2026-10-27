@@ -38,7 +38,7 @@ compressed.
 All canonical ledger records, older revisions, observations, public evidence,
 accounts/cards/rules and correction history remain ordinary uncompressed records
 for **all** months. Historical statistics are not frozen snapshots: Overview uses
-the existing `monthly_report` and canonical heads on every read. Late imports,
+`range_report` and canonical heads on every read. Late imports,
 corrections, rejections and imported canonical revisions update old totals, retain
 accepted/rejected/proposed distinctions, and keep integer minor units and separate
 currencies. No competing ledger or approximate financial arithmetic is introduced.
