@@ -14,13 +14,22 @@
 {% macro tabs(label, items, current) %}
 <nav class="tabs" aria-label="{{ label }}">{% for key, href, text in items %}<a href="{{ href }}" {% if key == current %}aria-current="page"{% endif %}>{{ text }}</a>{% endfor %}</nav>
 {% endmacro %}
-{% macro inspect_tabs(current, month=none) %}
-{% set q = '?month=' ~ month.key if month else '' %}
+{% macro inspect_tabs(current, period=none) %}
+{% set q = '?' ~ period.params|urlencode if period else '' %}
 {{ tabs('Saved data', [('mail', '/saved' ~ q, 'Saved mail'), ('transactions', '/ledger' ~ q, 'Transactions'), ('review', '/review', 'Review queue'), ('evidence', '/public', 'Card evidence'), ('import', '/imports', 'Import data'), ('storage', '/storage' ~ q, 'Storage')], current) }}
 {% endmacro %}
-{% macro month_tabs(current, month=none) %}
-{% set q = '?month=' ~ month.key if month else '' %}
-{{ tabs('This month', [('month', '/' ~ q, 'This month'), ('ai', '/ai', 'Safe AI analysis')], current) }}
+{% macro overview_tabs(current, period=none) %}
+{% set q = '?' ~ period.params|urlencode if period else '' %}
+{{ tabs('Overview', [('overview', '/' ~ q, 'Overview'), ('ai', '/ai', 'Safe AI analysis')], current) }}
+{% endmacro %}
+{% macro period_fields(period, prefix) %}
+<div class="period-fields" data-period-picker role="group" aria-label="Period"><div><label for="{{ prefix }}-start">From (Singapore time)</label><input id="{{ prefix }}-start" name="start" type="date" min="1970-01-01" max="9998-12-31" value="{{ period.start }}" required></div><div><label for="{{ prefix }}-end">To (inclusive, up to 3 months)</label><input id="{{ prefix }}-end" name="end" type="date" min="{{ period.start }}" max="{{ latest_end(period.start) }}" value="{{ period.last }}" required></div></div>
+{% endmacro %}
+{% macro period_hidden(period) %}
+{% for name, value in period.params.items() %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+{% endmacro %}
+{% macro period_picker(action, period, prefix, marked=true) %}
+<form class="period-picker" method="get" action="{{ action }}">{{ period_fields(period, prefix) }}<button class="secondary">View</button><nav class="period-shortcuts" aria-label="Quick periods">{% for label, preset in shortcuts() %}<a href="{{ action }}?{{ preset.params|urlencode }}" {% if marked and preset.key == period.key %}aria-current="true"{% endif %}>{{ label }}</a>{% endfor %}</nav></form>
 {% endmacro %}
 {% macro provider_connect(name, action, label, status, attempt, csrf, quiet=false) %}
 <form action="{{ action }}" method="post" target="provider-auth" data-provider-connect="{{ name }}" data-status="{{ status }}" data-attempt="{{ attempt }}"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="display" value="popup"><button {% if quiet %}class="secondary"{% endif %}>{{ label }} <span aria-hidden="true">↗</span></button></form>

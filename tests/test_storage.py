@@ -14,7 +14,7 @@ from test_monthly import FIXTURE, connected, load
 
 from spending_optimiser.document import SchemaDocument
 from spending_optimiser.ledger import Ledger
-from spending_optimiser.monthly import calendar_month, monthly_report
+from spending_optimiser.monthly import calendar_month, range_report
 from spending_optimiser.storage import GB, ArchiveError, Storage, hot_start, pack, unpack
 from spending_optimiser.web import create_app
 
@@ -132,11 +132,11 @@ def test_all_mail_versions_roundtrip_account_separation_and_disconnect(tmp_path)
     other, _ = connected(service.cache.ledger.path, fake, subject="account-B")
     load(other)
     original = versions(service)
-    before = service.saved_month(FEB)
+    before = service.saved_range(FEB)
     over_trigger(storage)
     storage.compress_if_needed(now=NOW)
     assert len(original) == 3 and storage.status()["mail_archived"] == 3
-    assert service.saved_month(FEB) == before
+    assert service.saved_range(FEB) == before
     assert storage.mail_archived(service.namespace, FEB) == 2
     assert storage.restore_mail(service.namespace, FEB) == 2
     assert storage.restore_mail(service.namespace, FEB) == 0  # idempotent
@@ -146,11 +146,11 @@ def test_all_mail_versions_roundtrip_account_separation_and_disconnect(tmp_path)
         for a, b in zip(versions(service), original, strict=True)
     )
     service.disconnect()
-    assert service.saved_month(FEB) == ({}, None)
+    assert service.saved_range(FEB) == ({}, None)
     assert len(versions(service)) == 3
     with pytest.raises(ValueError, match="Connect"):
         storage.restore_mail(None, FEB)
-    assert set(other.saved_month(FEB)[0]) == {"old"}
+    assert set(other.saved_range(FEB)[0]) == {"old"}
 
 
 def test_financial_history_evidence_imports_and_late_corrections_remain_exact(tmp_path):
@@ -170,7 +170,7 @@ def test_financial_history_evidence_imports_and_late_corrections_remain_exact(tm
     assert ledger.load() == before
     for digest, text in receipts.items():
         assert ledger.import_snapshot(digest) == text
-    feb_before = monthly_report(before, FEB)
+    feb_before = range_report(before, FEB)
     assert {c["currency"] for c in feb_before["charts"]} == {"SGD", "JPY", "KWD", "USD"}
     ledger.review(
         "weekly-groceries-v2",
@@ -180,7 +180,7 @@ def test_financial_history_evidence_imports_and_late_corrections_remain_exact(tm
         field="occurred_on",
         fact_json='{"status":"proposed","value":"2025-03-01"}',
     )
-    feb_after = monthly_report(ledger.load(), FEB)
+    feb_after = range_report(ledger.load(), FEB)
 
     def total(report):
         return next(c for c in report["charts"] if c["currency"] == "SGD")["totals"]["purchase"]
@@ -192,7 +192,7 @@ def test_financial_history_evidence_imports_and_late_corrections_remain_exact(tm
         if t.event_id == "weekly-groceries" and t.supersedes == "weekly-groceries-v2"
     )
     ledger.review(latest.revision_id, actor="Synthetic", reason="Late rejection", status="rejected")
-    march = monthly_report(ledger.load(), calendar_month("2025-03"))
+    march = range_report(ledger.load(), calendar_month("2025-03"))
     assert march["counts"]["rejected"] == 1
     assert ledger.load().evidence == before.evidence
     assert ledger.load().observations == before.observations
@@ -210,7 +210,7 @@ def test_financial_history_evidence_imports_and_late_corrections_remain_exact(tm
     data["transactions"] = [data["transactions"][0], revised]
     data["observations"] = [data["observations"][0]]
     ledger.import_document(json.dumps(data))
-    assert total(monthly_report(ledger.load(), FEB)) == total(feb_after) + 9999 - 1280
+    assert total(range_report(ledger.load(), FEB)) == total(feb_after) + 9999 - 1280
 
 
 def test_write_failure_rolls_back_all_compression_and_restoration(tmp_path):
@@ -260,7 +260,7 @@ with sqlite3.connect(sys.argv[1]) as db:
     )
     assert result.returncode == 17
     assert versions(service) == original
-    assert service.saved_month(FEB)[0]["old"].text
+    assert service.saved_range(FEB)[0]["old"].text
 
 
 @pytest.mark.parametrize(
@@ -307,11 +307,11 @@ def test_unrelated_cold_corruption_does_not_block_hot_month(tmp_path):
     with service.cache.ledger.connection() as db:
         db.execute("UPDATE mail_versions SET payload=? WHERE message_id='old'", (b"SOZ1corrupt",))
     hot = calendar_month("2025-05")
-    assert set(service.saved_month(hot)[0]) == {"hot"}
+    assert set(service.saved_range(hot)[0]) == {"hot"}
     assert storage.mail_archived(service.namespace, hot) == 0
     assert storage.restore_mail(service.namespace, hot) == 0
     with pytest.raises(ArchiveError):
-        service.saved_month(FEB)
+        service.saved_range(FEB)
 
 
 def test_archive_checksum_and_expansion_limit(monkeypatch):
@@ -336,7 +336,7 @@ def test_above_threshold_without_eligible_data_is_honest_and_non_destructive(tmp
 
 def test_hot_financial_provenance_and_unsupported_content_stay_intact(tmp_path):
     service, _, storage = seed(tmp_path)
-    candidate = service.saved_month(FEB)[0]["old"]
+    candidate = service.saved_range(FEB)[0]["old"]
     data = FIXTURE.monthly_document().model_dump(mode="json")
     data["observations"] = [candidate.observation.model_dump(mode="json")]
     transaction = data["transactions"][0]
@@ -392,7 +392,7 @@ def test_compaction_failure_preserves_archive_and_can_retry(tmp_path, monkeypatc
         assert result["compressed"] == 1 and not result["compacted"] and result["above"]
         assert "Completed writes remain saved" in result["warning"]
     assert unpack(versions(service)[0][3]) == original[0][3]
-    assert service.saved_month(FEB)[0]["old"].text
+    assert service.saved_range(FEB)[0]["old"].text
     with storage.ledger.connection() as db:
         assert db.execute("PRAGMA freelist_count").fetchone()[0] > 0
     allocated = storage.ledger.path.stat().st_size
@@ -428,7 +428,7 @@ def test_write_responses_distinguish_commits_from_maintenance_failures(
     fake.pages = {None: {"messages": [{"id": "old"}, {"id": "new"}]}}
     before = ledger.load()
     before_versions = versions(service)
-    before_scan = service.saved_month(FEB)[1]
+    before_scan = service.saved_range(FEB)[1]
     client = TestClient(app, base_url="http://127.0.0.1:8898")
     client.get("/imports")
     fields = {"csrf": client.cookies["ledger_csrf"]}
@@ -502,7 +502,7 @@ def test_write_responses_distinguish_commits_from_maintenance_failures(
         assert "Storage maintenance could not finish" not in response.text
         assert persisted.load() == before
         assert versions(service) == before_versions
-        assert service.saved_month(FEB)[1] == before_scan
+        assert service.saved_range(FEB)[1] == before_scan
         return
     assert response.status_code == 200 and "Request not saved" not in response.text
     assert "Storage maintenance could not finish" in response.text
@@ -518,10 +518,10 @@ def test_write_responses_distinguish_commits_from_maintenance_failures(
         assert sum(t.supersedes == "weekly-groceries-v2" for t in transactions) == 1
         assert "revisions preserved" in response.text
     else:
-        assert set(service.saved_month(FEB)[0]) == {"old", "new"}
+        assert set(service.saved_range(FEB)[0]) == {"old", "new"}
         assert len(versions(service)) == len(before_versions) + 1
         assert "2 saved candidates" in response.text
-        state = service.saved_month(FEB)[1]
+        state = service.saved_range(FEB)[1]
         assert state["exhausted"] and state["pages"] == 1 and state["failed"] == {}
     response = client.post("/storage/compress", data={"csrf": client.cookies["ledger_csrf"]})
     assert response.status_code == 200
@@ -547,7 +547,7 @@ def test_existing_v1_migration_and_automatic_write_path(tmp_path, monkeypatch):
     from spending_optimiser.mail_cache import MailCache
 
     migrated = MailCache(legacy)
-    assert migrated.candidates(service.namespace, FEB) == service.saved_month(FEB)[0]
+    assert migrated.candidates(service.namespace, FEB) == service.saved_range(FEB)[0]
     with migrated.ledger.connection() as db:
         assert db.execute("SELECT receipt_month FROM mail_versions").fetchone()[0] is None
         assert db.execute("PRAGMA user_version").fetchone()[0] == 2
@@ -559,7 +559,7 @@ def test_existing_v1_migration_and_automatic_write_path(tmp_path, monkeypatch):
     fake.body += " trigger automatic maintenance"
     load(service, action="refresh")
     assert storage.status()["mail_archived"] == 2
-    assert service.saved_month(FEB)[0]["old"].text == fake.body
+    assert service.saved_range(FEB)[0]["old"].text == fake.body
 
 
 def test_failed_schema_upgrade_rolls_back_and_v1_remains_recoverable(tmp_path, monkeypatch):
@@ -627,7 +627,7 @@ def test_real_desktop_routes_restore_protections_and_inert_mail(tmp_path):
     response = client.post("/storage/restore", data=fields)
     assert response.status_code == 200 and "Restored 1 saved mail versions" in response.text
     assert storage.mail_archived(service.namespace, FEB) == 0
-    assert service.saved_month(FEB)[0]["old"].text
+    assert service.saved_range(FEB)[0]["old"].text
     assert client.get("/storage", headers={"host": "evil.invalid"}).status_code == 400
     assert (
         client.post("/storage/restore", data={**fields, "namespace": "other-account"}).status_code

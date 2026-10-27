@@ -1,4 +1,4 @@
-"""One local account, explicit bounded month scans and saved mail. No extraction/AI."""
+"""One local account, explicit bounded period scans and saved mail. No extraction/AI."""
 
 import hashlib
 import secrets
@@ -10,7 +10,7 @@ from .dotenv_store import DotenvFile, default_env_path
 from .gmail import AuthenticationFailure, GmailAdapter, GmailRestClient
 from .gmail_auth import EnvStore, GmailProblem, GoogleOAuth, client_config
 from .mail_cache import MailCache, fresh_state
-from .monthly import SINGAPORE, calendar_month
+from .monthly import SINGAPORE
 
 # Proven per-message failures: retained for targeted retry without blocking later pages.
 PERSISTENT = {"invalid_message", "response_too_large"}
@@ -36,7 +36,7 @@ class GmailService:
         self.pending = {}
         self.connection = None
         self.connection_id = secrets.token_urlsafe(24)
-        self.notice_month = None
+        self.notice_range = None
         self.notice = None
         self.problem = None
         # Sign-in progress for the browser. `attempt` changes on every Connect request;
@@ -53,7 +53,7 @@ class GmailService:
     def clear(self):
         self.connection = None
         self.connection_id = secrets.token_urlsafe(24)
-        self.notice_month = None
+        self.notice_range = None
         self.notice = None
 
     def attempted(self, action, *args):
@@ -163,14 +163,13 @@ class GmailService:
             return None
         return "google-" + hashlib.sha256(self.connection.subject.encode()).hexdigest()
 
-    def saved_month(self, month):
+    def saved_range(self, period):
         namespace = self.namespace
         if namespace is None:
             return {}, None
-        return self.cache.candidates(namespace, month), self.cache.state(namespace, month)
+        return self.cache.candidates(namespace, period), self.cache.state(namespace, period)
 
-    def load_month(self, key, pages, connection_id, action):
-        month = calendar_month(key)
+    def load_range(self, period, pages, connection_id, action):
         if self.connection is None or not secrets.compare_digest(
             connection_id.encode(), self.connection_id.encode()
         ):
@@ -182,10 +181,10 @@ class GmailService:
         ):
             raise ValueError("Choose 1-5 pages and Continue, Retry failed messages or Refresh")
         connection, namespace = self.connection, self.namespace
-        state = fresh_state() if action == "refresh" else self.cache.state(namespace, month)
-        self.notice_month = month.key
+        state = fresh_state() if action == "refresh" else self.cache.state(namespace, period)
+        self.notice_range = period.key
         if action == "continue" and state["exhausted"]:
-            self.notice = "Month already exhausted. Refresh month to check for new mail."
+            self.notice = "Period already exhausted. Refresh period to check for new mail."
             return
         adapter = GmailAdapter(self.client_factory(self), namespace)
         self.problem = None
@@ -204,11 +203,11 @@ class GmailService:
                     errors.append(result.error.code)
             self.verify(connection, errors)
             state["checked_at"] = datetime.now(SINGAPORE).isoformat(timespec="seconds")
-            self.cache.save(namespace, month, state, found)
+            self.cache.save(namespace, period, state, found)
         else:
             for _ in range(pages):
                 page = adapter.fetch_page(
-                    query=month.query,
+                    query=period.query,
                     page_token=state["token"],
                     page_size=20,
                     seen_ids=[*state["seen"], *state["failed"]],
@@ -233,7 +232,7 @@ class GmailService:
                 if not errors:
                     token = page.next_page_token
                     if token is not None and token in state["tokens"]:
-                        state["errors"] = ["pagination_cycle; refresh month to restart"]
+                        state["errors"] = ["pagination_cycle; refresh period to restart"]
                     else:
                         if token is not None:
                             state["tokens"].append(token)
@@ -247,7 +246,7 @@ class GmailService:
                         state["retry"] = []
                 # Persist successes plus the unadvanced checkpoint on a failed page.
                 # Explicit Continue retries that page, skipping resolved IDs.
-                self.cache.save(namespace, month, state, found)
+                self.cache.save(namespace, period, state, found)
                 if state["errors"] or state["exhausted"]:
                     break
         self.notice = None  # Counts and coverage are rendered from the saved scan state.

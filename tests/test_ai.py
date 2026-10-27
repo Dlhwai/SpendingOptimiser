@@ -273,7 +273,7 @@ def test_getters_saving_preview_and_gmail_load_never_invoke_ai(app, client):
         connection_id=gmail.connection_id,
     )
     assert response.status_code == 200
-    assert len(gmail.saved_month(calendar_month("2025-02"))[0]) == 4
+    assert len(gmail.saved_range(calendar_month("2025-02"))[0]) == 4
     assert ai.client.inputs == []
     assert not app.state.ledger.load().transactions
 
@@ -884,7 +884,7 @@ def test_new_format_accepted_layout_parses_matching_candidates_without_ai(app, c
         connection_id=gmail.connection_id,
     )
     assert loaded.status_code == 200
-    assert len(gmail.saved_month(month)[0]) == 4
+    assert len(gmail.saved_range(month)[0]) == 4
     page = client.get("/saved?month=2025-02").text
     assert page.count("Matched accepted layout") == 4
     assert "SGD 1234 minor units" in page
@@ -899,8 +899,8 @@ def test_new_format_accepted_layout_parses_matching_candidates_without_ai(app, c
             update={"source_namespace": gmail.namespace, "source_record_id": "zero"}
         ),
     )
-    gmail.cache.save(gmail.namespace, month, gmail.saved_month(month)[1], [zero])
-    assert len(gmail.saved_month(month)[0]) == 5
+    gmail.cache.save(gmail.namespace, month, gmail.saved_range(month)[1], [zero])
+    assert len(gmail.saved_range(month)[0]) == 5
     response = client.get("/saved?month=2025-02")
     assert response.status_code == 200
     assert response.text.count("Matched accepted layout") == 4

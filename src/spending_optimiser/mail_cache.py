@@ -1,4 +1,4 @@
-"""Private account-scoped mail versions and resumable month scans, separate from facts."""
+"""Private account-scoped mail versions and resumable period scans, separate from facts."""
 
 import hashlib
 import json
@@ -43,20 +43,23 @@ class MailCache:
                 "message_id TEXT NOT NULL, digest TEXT NOT NULL, "
                 "PRIMARY KEY(namespace, message_id))"
             )
+            # The month column holds the scanned period's key: YYYY-MM for a calendar
+            # month, which is what every earlier row already is, else START..END days.
             db.execute(
                 "CREATE TABLE IF NOT EXISTS mail_scans (namespace TEXT NOT NULL, "
                 "month TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(namespace, month))"
             )
 
-    def state(self, namespace, month):
+    def state(self, namespace, period):
+        # Progress belongs to one account and exactly one period, never to an overlapping one.
         with self.ledger.connection() as db:
             row = db.execute(
                 "SELECT payload FROM mail_scans WHERE namespace=? AND month=?",
-                (namespace, month.key),
+                (namespace, period.key),
             ).fetchone()
         return {**fresh_state(), **json.loads(row[0])} if row else fresh_state()
 
-    def save(self, namespace, month, state, candidates):
+    def save(self, namespace, period, state, candidates):
         with self.ledger.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             for candidate in candidates:
@@ -88,21 +91,23 @@ class MailCache:
             db.execute(
                 "INSERT INTO mail_scans VALUES (?, ?, ?) "
                 "ON CONFLICT(namespace, month) DO UPDATE SET payload=excluded.payload",
-                (namespace, month.key, json.dumps(state)),
+                (namespace, period.key, json.dumps(state)),
             )
 
         self.ledger.maintain_storage()
 
-    def candidates(self, namespace, month):
+    def candidates(self, namespace, period):
         # Versions are retained for evidence replay, including content changes.
-        # Each observation appears once in the selected month's saved-mail view.
+        # Each observation appears once in the selected period's saved-mail view,
+        # whichever scan saved it.
+        marks = ", ".join("?" * len(period.months))
         with self.ledger.connection() as db:
             rows = db.execute(
                 "SELECT v.payload FROM mail_current c JOIN mail_versions v "
                 "ON v.namespace=c.namespace AND v.message_id=c.message_id AND v.digest=c.digest "
-                "WHERE c.namespace=? AND (v.receipt_month=? OR v.receipt_month IS NULL) "
-                "ORDER BY c.message_id",
-                (namespace, month.key),
+                f"WHERE c.namespace=? AND (v.receipt_month IN ({marks}) "
+                "OR v.receipt_month IS NULL) ORDER BY c.message_id",
+                (namespace, *period.months),
             ).fetchall()
         latest = {}
         for (payload,) in rows:
@@ -111,5 +116,5 @@ class MailCache:
         return {
             identity: candidate
             for identity, candidate in latest.items()
-            if month.contains(candidate.gmail_internal_at)
+            if period.contains(candidate.gmail_internal_at)
         }

@@ -12,7 +12,7 @@
 <aside class="sidebar">
 <a class="brand" href="/" aria-label="SpendingOptimiser home"><span class="brand-mark" aria-hidden="true">s<span>o</span></span><span>Spending<span class="brand-light">Optimiser</span></span></a>
 <nav aria-label="Steps">
-{% set suffix = '?month=' ~ month.key if month is defined and month and request.query_params.get('month') else '' %}
+{% set suffix = '?' ~ period.params|urlencode if period is defined and period and (request.query_params.get('month') or request.query_params.get('start')) else '' %}
 {% for number, path, label in [(1, '/gmail', 'Connect Gmail'), (2, '/saved', 'Inspect saved data'), (3, '/', 'Understand this month')] %}
 <a href="{{ path }}{{ suffix }}" {% if step|default(0) == number %}aria-current="page"{% endif %}><span class="nav-icon" aria-hidden="true">{{ number }}</span>{{ label }}</a>
 {% endfor %}

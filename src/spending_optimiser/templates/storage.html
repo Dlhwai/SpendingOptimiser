@@ -1,16 +1,17 @@
 {% extends 'base.html' %}
-{% from 'components.html' import inspect_tabs %}
+{% from 'components.html' import inspect_tabs, period_fields %}
 {% set step = 2 %}
 {% block title %}Storage{% endblock %}
 {% block content %}
 <div class="page-head"><div><p class="eyebrow">Step 2 of 3</p><h1>Storage</h1></div><span class="badge {{ 'pending' if storage.above else 'accepted' }}">{{ 'Above compression trigger' if storage.above else 'Within compression trigger' }}</span></div>
-{{ inspect_tabs('storage', month) }}
-<section class="card"><h2>{{ '{:,}'.format(storage.bytes) }} bytes managed</h2><p class="muted small">Lossless compression only: nothing is deleted. No application-level encryption.</p><p>Compression trigger: above {{ '{:,}'.format(storage.threshold) }} bytes. Hot months start at <strong>{{ storage.hot_start }}</strong>.</p>
+{{ inspect_tabs('storage', period) }}
+<section class="card"><h2>{{ '{:,}'.format(storage.bytes) }} bytes managed</h2><p class="muted small">Automatic after each import, review and mail load. Lossless: nothing is deleted. No application-level encryption.</p><p>Compression trigger: above {{ '{:,}'.format(storage.threshold) }} bytes. Hot months start at <strong>{{ storage.hot_start }}</strong>.</p>
 <p><strong>{{ storage.mail_archived }} compressed mail versions · {{ storage.imports_archived }} compressed import receipts</strong></p>
 {% if storage.above %}<p class="warning" role="status">Storage remains above 1 GB. Eligible older data may be absent, already compressed or too small to help.</p>{% endif %}
 {% if result %}<p class="notice" role="status">Last check: {{ result.compressed }} payloads compressed; {{ result.skipped }} corrupt or unsupported payloads left untouched. {{ 'Database compacted.' if result.compacted else 'No database compaction completed.' }}</p>{% endif %}
-<form method="post" action="/storage/compress"><input type="hidden" name="csrf" value="{{ csrf }}"><button>Check storage / compress eligible detail</button></form></section>
+<form method="post" action="/storage/compress"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary">Check storage now</button></form></section>
 <section class="card" style="margin-top:24px"><h2>Restore saved mail</h2>
-{% if gmail.connection %}<form class="month-picker" method="post" action="/storage/restore"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="connection_id" value="{{ gmail.connection_id }}"><div><label for="restore-month">Saved mail month for {{ gmail.connection.email }}</label><input id="restore-month" type="month" name="month" min="1970-01" max="9998-12" value="{{ month.key }}" required></div><button class="secondary">Restore saved mail month</button></form>{% else %}<p>0 results. <a href="/gmail">Connect Gmail</a> to restore its saved mail.</p>{% endif %}</section>
+{% if gmail.connection %}<form class="period-picker" method="post" action="/storage/restore"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="connection_id" value="{{ gmail.connection_id }}">{{ period_fields(period, 'restore') }}<button class="secondary">Restore saved mail</button></form>{% else %}<p>0 results. <a href="/gmail">Connect Gmail</a> to restore its saved mail.</p>{% endif %}</section>
 <section class="card" style="margin-top:24px"><h2>Managed paths</h2><table class="data-table" aria-label="Managed paths"><thead><tr><th scope="col">Managed path</th><th scope="col">Bytes</th></tr></thead><tbody>{% for path in storage.paths %}<tr><td class="text-wrap"><code>{{ path.path }}</code></td><td>{{ '{:,}'.format(path.bytes) }}</td></tr>{% endfor %}</tbody></table></section>
 {% endblock %}
+{% block scripts %}<script src="/static/period-picker.js"></script>{% endblock %}

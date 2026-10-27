@@ -36,6 +36,8 @@ def synthetic_dependencies_only(monkeypatch):
         ("GET", "/ai/proposal?id={proposal}", False),
         ("GET", "/?month=2025-02", False),
         ("GET", "/ledger?month=2025-02", False),
+        ("GET", "/saved?start=2025-01-31&end=2025-03-01", False),
+        ("GET", "/?start=2025-02-10&end=2025-02-10", False),
         ("GET", "/review", False),
         ("GET", "/transaction?event_id=test-purchase", False),
         ("GET", "/public", False),
@@ -49,7 +51,7 @@ def test_database_requests_yield_during_vacuum(tmp_path, monkeypatch, method, pa
     ledger, gmail, ai = app.state.ledger, app.state.gmail, app.state.ai
     month = calendar_month("2025-02")
     gmail.connection = gmail.oauth.connection()
-    gmail.load_month(month.key, 1, gmail.connection_id, "continue")
+    gmail.load_range(month, 1, gmail.connection_id, "continue")
     ai.connect()
     snapshot = ai.save_format(
         "Purchase <CURRENCY> <AMOUNT> at <MERCHANT> on <DATE_ISO>. Card <CARD_SUFFIX>."
@@ -58,7 +60,7 @@ def test_database_requests_yield_during_vacuum(tmp_path, monkeypatch, method, pa
         snapshot, digest(ai.preview(snapshot)), ai.connection_id, "analyse-safe-snapshot"
     )
     document = ledger.load()
-    saved_mail = gmail.saved_month(month)
+    saved_mail = gmail.saved_range(month)
     with ledger.connection() as db:
         assert db.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
 
@@ -184,7 +186,7 @@ def test_database_requests_yield_during_vacuum(tmp_path, monkeypatch, method, pa
         assert all(db.closed for db in connections)
         assert any(db.owner == loop_thread for db in connections) == on_loop
         assert app.state.storage.status()["mail_archived"] == 4
-        assert ledger.load() == document and gmail.saved_month(month) == saved_mail
+        assert ledger.load() == document and gmail.saved_range(month) == saved_mail
         assert len(ai.client.inputs) == 1
         assert ai.find_proposal(proposal)["status"] == "pending"
         assert len(ai.snapshots()) == (2 if path == "/ai/save" else 1)

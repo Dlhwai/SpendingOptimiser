@@ -54,7 +54,7 @@ material, credentials, screenshots containing financial data, or exports.
    month, while this fixture's event is dated January 2025. Import counts include
    public products/evidence/rules and private accounts/cards/observations/events.
    The purchase is SGD 1234 **minor units** (SGD 12.34). See the [monthly inclusion
-   rules](monthly.md#inclusion-rules-and-financial-meaning) for summary eligibility.
+   rules](monthly.md#what-the-overview-includes) for summary eligibility.
 3. Open **Review queue**, then **test-purchase**. Inspect per-field uncertainty,
    evidence locators, the private synthetic observation, and the original history.
    Unknown posting date, merchant, MCC, and other optional values are not inferred.
@@ -79,35 +79,70 @@ material, credentials, screenshots containing financial data, or exports.
    present. Stop and restart the service with the same database path; all three
    transaction revisions and the accepted head remain.
 
-**Transactions > Refresh local data** rereads SQLite. It never pretends to fetch Gmail.
-The separate **Card evidence** view excludes private accounts,
-observations, transaction quotes, and correction histories. Public evidence
-referenced by a transaction is visible in its detail, while private observations
-cannot be referenced by public records under the existing schema validation.
+Reloading any page rereads SQLite. Opening a page never fetches Gmail.
+
+## Card evidence
+
+**Card evidence** (a tab of **Inspect saved data**) is a read-only list of the public,
+card-level reference information saved in your local database. It answers "which cards
+and which public sources does the app hold?", not "what did I spend?". It shows three
+groups of records exactly as stored, each expandable to its full JSON:
+
+- **Products**: the cards, by the name you supplied (for example "Maybank Rewards XL")
+  plus issuer, country, variant and network. Each of those is marked unknown, proposed
+  or verified. The three supplied cards are unresolved labels until their exact
+  variants are researched.
+- **Evidence**: the public documents the information came from. Each record keeps the
+  document's URL, kind (issuer, program, campaign, editorial or synthetic), retrieval
+  time, effective dates, document version and an optional content hash. It records
+  where something was read, not that it is true.
+- **Rules**: versioned rule sets proposed for a product: earning rates, minimum spend,
+  caps, eligibility, exclusions, rounding, date basis and redemption. Every field has a
+  status and cites its evidence. Older revisions are kept, never overwritten.
+
+What it is **not**:
+
+- Not your transactions, accounts, card numbers, mail or review history. Private
+  records are deliberately excluded from this view. A transaction's own detail page
+  shows the public evidence it cites.
+- Not proof that a rule is correct, verified or in force. The page says so itself:
+  *Reference data only: not an activated or verified rule catalog*. The app calculates
+  no rewards from these rules.
+- Not a researched catalogue. The app does not look cards up for you.
+
+Records arrive only through **Import data**, which accepts a schema document. The
+bundled synthetic example adds the three unresolved card names plus one fictional
+product, one fictional evidence record and one fictional rule set (4 products,
+1 evidence and 1 rule). Until something is imported each group shows **0 results**.
+Official terms captured in **Safe AI analysis** and their proposals live in that
+workflow's own saved snapshots and never appear here or change the ledger.
 
 ## Workspace navigation
 
 The sidebar has exactly three steps; related views are tabs on their step.
 
 1. **Connect Gmail**: Connect/Restore/Disconnect through a sign-in window, and
-   explicit bounded month Load/Continue/Refresh with account-scoped retrieval state.
-   See [monthly workflow](monthly.md).
+   explicit bounded Load/Continue/Retry/Refresh for a chosen period (a day, a month or
+   up to three calendar months) with retrieval state kept per account and period.
+   See [periods and charts](monthly.md).
 2. **Inspect saved data**, with tabs:
    - **Saved mail**: persistent candidates, separate from ledger events.
    - **Transactions**: all canonical ledger events, including accepted/rejected ones.
      Open an event for facts, source evidence, review/correction and immutable history.
    - **Review queue**: events needing a decision. Reviewer, reason and action are
      primary; complete Fact JSON correction is available in an optional disclosure.
-   - **Card evidence**, **Import data** and **Storage**: public reference data,
-     advanced snapshot import, and compression/restoration of older detail.
-3. **Understand this month**, with tabs **This month** (calendar-month canonical
-   transactions, decision counts, separate currency/kind magnitudes, purchase grouping
-   and daily charts, with exclusions) and **Safe AI analysis**. All data comes from
-   saved records, never page-triggered retrieval or AI.
+   - **Card evidence** (see above), **Import data** and **Storage**: public reference
+     data, advanced snapshot import, and automatic compression with restoration of
+     older detail.
+3. **Understand this month**, with tabs **Overview** (canonical transactions for the
+   chosen period, decision counts, separate currency/kind magnitudes, purchase
+   grouping and daily charts, with exclusions) and **Safe AI analysis**. All data comes
+   from saved records, never page-triggered retrieval or AI.
 
 The interface uses local system fonts, server-rendered semantic forms, visible
-keyboard focus and responsive layouts, with no remote assets or frontend build. Its one
-script is the same-origin sign-in window helper on the Connect pages. See the README's
+keyboard focus and responsive layouts, with no remote assets or frontend build. Its
+only scripts are same-origin helpers: the sign-in window helper on the Connect pages
+and the date-picker limit helper on pages with a period control. See the README's
 disposable synthetic preview for safe UI exploration.
 
 ## Persistence and review contract
@@ -172,8 +207,8 @@ never receives imported private data. Tests and smoke validation use synthetic m
 
 There is no multi-user login, application-level encryption at rest, deletion UI,
 automatic backups, ledger-table pagination, or production hosting support.
-See [Storage](storage.md) for compression, saved-month restoration,
-database migration and post-write maintenance. Do not expose the service through
+See [Storage](storage.md) for automatic compression, restoration of saved mail for a
+period, database migration and post-write maintenance. Do not expose the service through
 a proxy, LAN bind, or tunnel; the local OS user and other software on the machine
 remain trusted. All database readers
 can see private material. For a backup, stop the service and copy the database

@@ -1,10 +1,10 @@
 {% extends 'base.html' %}
-{% from 'components.html' import month_tabs %}
+{% from 'components.html' import overview_tabs %}
 {% set step = 3 %}
 {% block title %}Review safe AI proposal{% endblock %}
 {% block content %}
 <div class="page-head"><div><p class="eyebrow">Step 3 of 3</p><h1>Review safe AI proposal</h1></div><span class="badge">{{ record.status }}</span></div>
-{{ month_tabs('ai') }}
+{{ overview_tabs('ai') }}
 <section class="card"><h2>{{ record.result.kind|title }} reference</h2>
 {% if record.result.kind == 'terms' %}
 {% if record.result.usable %}{% set threshold = record.result.rule.minimum_spend.value[0].threshold.value %}<p>Proposed minimum spend: <strong>{{ threshold.currency }} {{ threshold.minor_units }} minor units</strong>.</p>{% else %}<p>No supported threshold was established.</p>{% endif %}

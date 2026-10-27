@@ -40,7 +40,15 @@ from .dotenv_store import DotenvError, DotenvFile, default_env_path
 from .gmail_auth import MESSAGES, EnvStore, GmailProblem, configure_google
 from .gmail_service import GmailService
 from .ledger import CORRECTION_FIELDS, Conflict, Ledger, heads, needs_review, uncertain
-from .monthly import SINGAPORE, calendar_month, format_money, grouping, monthly_report
+from .monthly import (
+    SINGAPORE,
+    format_money,
+    grouping,
+    latest_end,
+    range_report,
+    selected_range,
+    shortcuts,
+)
 from .public_terms import ISSUERS
 from .storage import Storage
 
@@ -140,7 +148,12 @@ def create_app(
     templates = Jinja2Templates(directory=str(files("spending_optimiser").joinpath("templates")))
     templates.env.globals["money"] = format_money
     templates.env.globals["singapore"] = SINGAPORE
-    connect_script = files("spending_optimiser").joinpath("static/provider-connect.js").read_text()
+    templates.env.globals["shortcuts"] = shortcuts
+    templates.env.globals["latest_end"] = latest_end
+    scripts = {
+        name: files("spending_optimiser").joinpath(f"static/{name}").read_text()
+        for name in ("provider-connect.js", "period-picker.js")
+    }
     # Only an opaque session ID goes in this signed, HttpOnly cookie. Lax permits
     # Google's top-level callback GET; existing mutation CSRF cookie stays Strict.
     app.add_middleware(
@@ -241,9 +254,20 @@ def create_app(
                 gmail.problem = exc.code
                 return None
 
-    @app.get("/static/provider-connect.js")
-    def provider_script():
-        return Response(connect_script, media_type="text/javascript")
+    @app.get("/static/{name}")
+    def script(name: str):
+        if name not in scripts:
+            raise HTTPException(404, "Not found")
+        return Response(scripts[name], media_type="text/javascript")
+
+    def period_fields(form):
+        """The period a form names, in the fields the pages link with. Never a silent default."""
+        chosen = {
+            name: text_field(form, name) for name in ("month", "start", "end") if name in form
+        }
+        if not chosen:
+            raise HTTPException(422, "Choose a calendar month or a date range")
+        return selected_range(chosen)
 
     def display_mode(form):
         # "popup" targets the sign-in window; "window" is the explicit same-window fallback.
@@ -274,16 +298,16 @@ def create_app(
     @app.get("/gmail", response_class=HTMLResponse)
     def gmail_page(request: Request):
         session = request.session.setdefault("id", secrets.token_urlsafe(32))
-        month = calendar_month(request.query_params.get("month"))
+        period = selected_range(request.query_params)
         waiting = gmail.status(session)["state"] == "pending"  # may record an expired attempt
         view = copy(gmail)  # one account identity per rendered response, even during switches
-        candidates, scan = view.saved_month(month)
+        candidates, scan = view.saved_range(period)
         return render(
             request,
             "gmail.html",
             gmail=view,
             messages=MESSAGES,
-            month=month,
+            period=period,
             count=len(candidates),
             scan=scan,
             waiting=waiting,
@@ -292,30 +316,29 @@ def create_app(
     @app.get("/saved", response_class=HTMLResponse)
     def saved_page(request: Request):
         request.session.setdefault("id", secrets.token_urlsafe(32))
-        month = calendar_month(request.query_params.get("month"))
+        period = selected_range(request.query_params)
         view = copy(gmail)
-        candidates, scan = view.saved_month(month)
+        candidates, scan = view.saved_range(period)
         return render(
             request,
             "saved.html",
             gmail=view,
-            month=month,
+            period=period,
             candidates=candidates,
             scan=scan,
             matches=ai.format_proposals(candidates) if view.connection else {},
-            archived=storage.mail_archived(view.namespace, month),
+            archived=storage.mail_archived(view.namespace, period),
         )
 
     @app.get("/storage", response_class=HTMLResponse)
     def storage_page(request: Request):
-        month = calendar_month(request.query_params.get("month"))
         return render(
             request,
             "storage.html",
             storage=storage.status(),
             result=app.state.storage_result,
             gmail=copy(gmail),
-            month=month,
+            period=selected_range(request.query_params),
         )
 
     @app.post("/storage/compress")
@@ -328,8 +351,8 @@ def create_app(
 
     @app.post("/storage/restore")
     async def storage_restore(request: Request):
-        form = await form_data(request, {"month", "connection_id"})
-        month = calendar_month(text_field(form, "month"))
+        form = await form_data(request, {"month", "start", "end", "connection_id"})
+        period = period_fields(form)
         connection_id = text_field(form, "connection_id")
 
         def restore():
@@ -337,14 +360,14 @@ def create_app(
                 connection_id.encode(), gmail.connection_id.encode()
             ):
                 raise HTTPException(409, "Account changed; reload before restoring saved mail")
-            restored = storage.restore_mail(gmail.namespace, month)
-            gmail.notice_month = month.key
+            restored = storage.restore_mail(gmail.namespace, period)
+            gmail.notice_range = period.key
             gmail.notice = (
-                f"Restored {restored} saved mail versions for {month.label}. No mail fetched."
+                f"Restored {restored} saved mail versions for {period.label}. No mail fetched."
             )
 
         await run_in_threadpool(gmail_operation, restore)
-        return RedirectResponse("/saved?" + urlencode({"month": month.key}), status_code=303)
+        return RedirectResponse("/saved?" + urlencode(period.params), status_code=303)
 
     @app.post("/gmail/connect", response_class=HTMLResponse)
     async def gmail_connect(request: Request):
@@ -416,21 +439,23 @@ def create_app(
 
     @app.post("/gmail/month")
     async def gmail_month(request: Request):
-        form = await form_data(request, {"month", "pages", "connection_id", "action"})
+        form = await form_data(
+            request, {"month", "start", "end", "pages", "connection_id", "action"}
+        )
         try:
             pages = int(text_field(form, "pages"))
         except ValueError:
             raise HTTPException(422, "Choose 1-5 pages per action") from None
-        month = calendar_month(text_field(form, "month"))
+        period = period_fields(form)
         await run_in_threadpool(
             gmail_operation,
-            gmail.load_month,
-            month.key,
+            gmail.load_range,
+            period,
             pages,
             text_field(form, "connection_id"),
             text_field(form, "action"),
         )
-        return RedirectResponse("/gmail?" + urlencode({"month": month.key}), status_code=303)
+        return RedirectResponse("/gmail?" + urlencode(period.params), status_code=303)
 
     def ai_operation(action, *args):
         try:
@@ -562,14 +587,14 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request):
         document = ledger.load()
-        month = calendar_month(request.query_params.get("month"))
+        period = selected_range(request.query_params)
         view = copy(gmail)
-        candidates, scan = view.saved_month(month)
+        candidates, scan = view.saved_range(period)
         return render(
             request,
             "overview.html",
-            month=month,
-            report=monthly_report(document, month),
+            period=period,
+            report=range_report(document, period),
             candidates=candidates,
             scan=scan,
             added=request.query_params.get("added"),
@@ -581,13 +606,10 @@ def create_app(
     def ledger_page(request: Request):
         document = ledger.load()
         transactions = heads(document)
-        month = (
-            calendar_month(request.query_params["month"])
-            if "month" in request.query_params
-            else None
-        )
-        if month:
-            transactions = [row["transaction"] for row in monthly_report(document, month)["rows"]]
+        chosen = any(name in request.query_params for name in ("month", "start", "end"))
+        period = selected_range(request.query_params) if chosen else None
+        if period:
+            transactions = [row["transaction"] for row in range_report(document, period)["rows"]]
         return render(
             request,
             "ledger.html",
@@ -595,8 +617,8 @@ def create_app(
             review_count=sum(needs_review(t) for t in transactions),
             revision_count=len(document.transactions),
             review_only=False,
-            month=month,
-            selected_month=month or calendar_month(),
+            period=period,
+            selected=period or selected_range({}),
             groups={t.event_id: grouping(document, t)[1] for t in transactions},
         )
 

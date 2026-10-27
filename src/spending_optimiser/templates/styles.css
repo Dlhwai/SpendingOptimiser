@@ -1029,13 +1029,20 @@ section[id] {
 .stack > .card + .card {
   margin: 0;
 }
-.month-picker {
+.period-picker {
   display: flex;
+  flex-wrap: wrap;
   align-items: end;
-  gap: 12px;
+  gap: 10px 12px;
   margin-bottom: 20px;
 }
-.page-head .month-picker { margin-bottom: 0; }
+.page-head .period-picker { margin-bottom: 0; justify-content: flex-end; }
+.period-fields { display: flex; flex-wrap: wrap; gap: 10px 12px; }
+.period-fields input { width: auto; min-width: 160px; }
+.period-shortcuts { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; }
+.page-head .period-shortcuts { justify-content: flex-end; }
+.period-shortcuts a[aria-current] { color: var(--green-dark); font-weight: 650; text-decoration: none; }
+.period-links { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: -8px 0 20px; }
 .kind-totals {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1194,6 +1201,10 @@ form > input + button, form > select + button { margin-top: 14px; }
   }
   .page-head h1 {
     font-size: 30px;
+  }
+  .page-head .period-picker,
+  .page-head .period-shortcuts {
+    justify-content: flex-start;
   }
   .page-head p {
     font-size: 13px;

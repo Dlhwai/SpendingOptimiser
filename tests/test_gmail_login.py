@@ -234,7 +234,7 @@ def load(env, pages="2", month="2025-02", action="refresh", connection_id=None):
 
 
 def saved(service):
-    return service.saved_month(MONTH)[0]
+    return service.saved_range(MONTH)[0]
 
 
 def test_oauth_real_library_flow_load_refresh_and_ledger_preserved(setup):
@@ -460,7 +460,7 @@ def test_zero_partial_errors_limits_cycles_and_safe_html(setup):
     assert "Untrusted mail" in inbox and "tracking.invalid" not in inbox
     assert "execute()" not in inbox
     env.google.pages = {None: {"messages": [{"id": "mail1"}], "nextPageToken": "more"}}
-    assert "Incomplete month" in load(env, pages="1").text
+    assert "Incomplete period" in load(env, pages="1").text
     env.google.pages = {
         None: {"nextPageToken": "a"},
         "a": {"nextPageToken": "b"},
@@ -475,7 +475,7 @@ def test_zero_partial_errors_limits_cycles_and_safe_html(setup):
         "d": {"nextPageToken": "e"},
     }
     before = len(env.google.calls)
-    assert "Incomplete month" in load(env, pages="5").text
+    assert "Incomplete period" in load(env, pages="5").text
     assert len(env.google.calls) - before == 5
     for code in ("rate_limited", "permission_denied", "transport_failed", "api_error"):
         env.google.error = code
