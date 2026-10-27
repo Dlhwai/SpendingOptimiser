@@ -10,8 +10,9 @@ app is disconnected and needs no AI client. For saved-data charts, see the
 
 - A restricted, unmodified official **Codex CLI 0.164.0**, on **macOS Apple Silicon**,
   with official ChatGPT browser consent and mandatory native Keychain storage.
-  This milestone qualifies unmanaged clients only: any effective MDM, local-admin
-  or cloud requirements cause refusal, not an attempt to override policy.
+  This milestone qualifies unmanaged clients only: requirements beyond the app's
+  own ChatGPT-only login pin cause refusal, not an attempt to override MDM,
+  local-admin or cloud policy.
   The native binary checksum is pinned to the version used for enforcement proof.
 - **Official public terms importer.** A closed collection of independently checked
   official issuer origins (DBS `www.dbs.com.sg`/`dbs.com.sg`, Maybank Singapore
@@ -163,9 +164,14 @@ separate data; instruction-like source text grants no authority.
 
 Before every analysis the official app-server's effective configuration is checked:
 
-- Supported `configRequirements/read` must report no managed requirements both
-  before setup and after thread startup, before the analysis turn. This covers
-  policy pins that a user-config read alone cannot establish.
+- Supported `configRequirements/read` must report explicit `requirements: null`,
+  or an object whose non-null entries are exactly
+  `{"allowedLoginMethods":["chatgpt"]}`. The pinned client projects the app's own
+  `forced_login_method = "chatgpt"` into this response; it is not additional policy.
+  Missing, malformed, empty/all-null objects, other login lists and any other
+  non-null requirement are refused. This check runs on Connect (including saved
+  session restore), before every analysis and again after thread startup, before
+  the turn. Policy pins cannot be established by a user-config read alone.
 - Named `noio` profile: filesystem root **deny**, no narrower grants/inheritance,
   network disabled, approvals **never**, permission requests disabled. Legacy
   sandbox settings are refused because they can override named profiles.
@@ -252,6 +258,25 @@ uv run --locked pytest
 uv run --locked ruff check .
 uv run --locked ruff format --check .
 ```
+
+`tests/fixtures/codex-0.164.0-chatgpt-requirements.json` records the full native
+reply observed with the exact production configuration, including null fields not
+in the generated stable schema. Portable tests replay it and reject malformed or
+additional policy. The opt-in macOS Apple Silicon contract also runs the pinned
+binary with production configuration and disposable HOME/CODEX_HOME/cwd:
+
+```sh
+NATIVE_CONTRACT_BINARY=/absolute/path/to/codex uv run --locked pytest -q tests/test_codex_native_contract.py
+```
+
+The contract requires `sandbox-exec`, denies all network and Keychain access, and
+permits only initialize/config/skills protocol operations through to the native
+binary. Web Connect, saved-session restore and failed-login tests use real native
+pre-auth checks plus synthetic auth validated against that binary's generated
+protocol schema. No authentication/account/model operation reaches the native
+client, no browser follows the synthetic sign-in link, and no checksum or
+production configuration override is used. These tests do not verify real-account
+sign-in, Keychain persistence, callback/token exchange or subscription entitlement.
 
 `tests/test_public_terms_tls.py` runs the real terms download over TLS to a loopback
 server with synthetic certificate authorities and an emptied host trust store: the
