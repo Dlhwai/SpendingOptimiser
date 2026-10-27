@@ -6,10 +6,10 @@ your computer at `http://127.0.0.1:8765`, and nothing leaves it unless you expli
 ask for a Gmail load or an AI analysis.
 
 **Status: early.** The offline ledger, saved Gmail candidates and period views are
-implemented and tested with synthetic data. Live Gmail has not been verified, and a
-Google sign-in problem reported on the installed app is being diagnosed separately;
-this work does not change sign-in. Rewards, qualified bank-email parsing and
-card-term research are not built.
+implemented and tested with synthetic data. Live Gmail has not been verified,
+including a certificate-trust fix for a Google sign-in failure reported on the
+installed app (see [Gmail limits](docs/gmail.md)). Rewards, qualified bank-email
+parsing and card-term research are not built.
 
 ## What it does
 
