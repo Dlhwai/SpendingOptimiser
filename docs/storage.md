@@ -1,8 +1,27 @@
 # Local storage and recoverable older detail
 
-Open the **Storage** tab under **Inspect saved data** for measured bytes, exact paths,
-archive counts, a manual compression check and account-scoped month restoration.
-There is no daemon, scheduler, cloud storage, extraction or AI involved.
+The app compresses older detail by itself, so nothing needs to be run for normal
+use. The **Storage** tab under **Inspect saved data** shows measured bytes, exact
+paths, archive counts, an optional manual check and restoration of saved mail for a
+period. There is no daemon, scheduler, cloud storage, extraction or AI involved.
+
+## Compression is automatic
+
+- **When:** after each successful schema import (including the bundled example),
+  manual review or correction, and saved-mail page or failed-message retry. Other
+  writes, such as saved AI snapshots, do not trigger it; the next write above or a
+  manual check covers them. The check runs after the write is committed, in the
+  request's worker thread and never on the web server's event loop.
+- **What:** only if logical usage is strictly above 1,000,000,000 bytes, and only
+  eligible older detail (see below). Below the trigger nothing is touched.
+- **What it does not do:** it never runs when a page is opened (Storage included), at
+  startup, on a timer or while the app is idle. A database that grows while idle is
+  processed on the next write or manual check.
+- **If it fails:** the write stays saved and a separate **Storage maintenance could not
+  finish** warning appears. Fix disk space or access, then choose **Check storage now**.
+- **Check storage now** on the Storage tab is optional. It runs the same check on
+  demand, for example to retry after a warning. Skipping it deletes nothing, and using
+  it deletes nothing.
 
 ## Three-month working default
 
@@ -11,6 +30,10 @@ not a rolling 90-day window. For example, in May the working window starts March
 1 at 00:00 Singapore time. Future-dated data is not eligible. Mail uses the same
 Gmail receipt timestamp/month boundaries as Connect Gmail, not the untrusted Date
 header. Financial months still use canonical transaction event dates.
+
+This window is a fixed storage policy. It is independent of the period you view or
+load: choosing another month or range never moves it, and it never changes what is
+compressed.
 
 All canonical ledger records, older revisions, observations, public evidence,
 accounts/cards/rules and correction history remain ordinary uncompressed records
@@ -34,11 +57,8 @@ storage and OS temporary files are excluded. SQLite's temporary compaction space
 is not part of this ongoing measurement and may require additional free disk.
 
 Compression is considered **strictly above 1,000,000,000 bytes (1 decimal GB)**,
-never at exactly that amount. Checks occur after successful imports, manual
-reviews and saved-mail page/retry writes, plus the explicit storage-page action.
-Page views do not compress, fetch mail, read `.env` or mutate the
-archive. No startup/background scan runs. A database that grows while idle will
-be measured on the storage page and processed on the next write/manual check.
+never at exactly that amount. Page views do not compress, fetch mail, read `.env` or
+change the archive. The Storage page measures the current size every time it opens.
 
 Eligible detail:
 
@@ -63,25 +83,25 @@ eligible records, then runs SQLite `VACUUM` if it compressed any payloads or
 reclaimable free pages remain. Compaction can fail for insufficient disk space or
 locks; committed compressed content remains usable, but physical file size may
 not fall yet. After failed or interrupted compaction, a later above-trigger write
-or manual check can retry it even with **0 newly compressed payloads**. The UI
-reports whether compaction completed and how many corrupt/unsupported payloads
-were skipped by a manual check. If usage remains above the trigger, it says so
+or manual check can retry it even with **0 newly compressed payloads**. A manual
+check reports whether compaction completed and how many corrupt or unsupported
+payloads were skipped. If usage remains above the trigger, the page says so
 honestly. Nothing is purged and current working data is not evicted to reach 1 GB.
 
 ## Reading and restoring
 
 Older monthly financial statistics and transaction detail need no restoration.
 Saved mail can also read older compressed candidates: payloads are verified and
-decoded locally in memory. **Restore saved mail month** in Saved mail or Storage
-persists *all content versions* of that account's selected month back as text in
-one transaction. This is separate from **Restore saved connection**, which reads
+decoded locally in memory. **Restore saved mail** in Saved mail or Storage persists
+*all content versions* received in that account's selected period (a day, a range up
+to three calendar months, or a month) back as text in one transaction. This is separate from **Restore saved connection**, which reads
 authorization from `.env`. Archive restoration makes no Google/model
 requests and does not access credentials. Repeating it restores zero additional
 versions. Disconnect still hides mail without removing it; reconnect the same
 stable Google identity to read or restore it. Stale account forms are rejected.
 
 Restoring older mail may increase storage. There is no configurable pinning/cache
-platform: another write or explicit check above the trigger can compress it again.
+platform: the next write or manual check above the trigger compresses it again.
 `Ledger.import_snapshot(digest)` reads the exact canonical imported receipt whether
 stored as text or compressed. Whitespace/key ordering of the originally supplied
 JSON was already normalized at import and is not recovered by compression.
@@ -111,9 +131,9 @@ Primary imports/reviews/mail pages commit **before** maintenance. A later SQLite
 or filesystem maintenance failure preserves the successful operation and shows a
 separate **Storage maintenance could not finish** warning, not **Request not
 saved**. Do not replay the saved operation to retry maintenance: check disk space
-and access, then use **Check storage / compress eligible detail** in Storage &
-archives. A successful manual check clears the warning. Pre-commit write failures
-still roll back the failed operation; earlier completed mail pages remain saved.
+and access, then choose **Check storage now** in Storage. A successful manual check
+clears the warning. Pre-commit write failures still roll back the failed operation;
+earlier completed mail pages remain saved.
 VACUUM runs only after compression commits, using SQLite's own transactional
 recovery.
 

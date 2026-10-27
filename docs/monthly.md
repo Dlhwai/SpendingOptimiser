@@ -1,146 +1,195 @@
-# Deterministic desktop monthly workflow
+# Periods, saved mail and charts
 
-The main page is a calendar-month view of **saved ledger facts**, not a Gmail
-parser, complete bank statement or AI-generated dashboard. All page GETs read
-local data only and never invoke a model. There is no chatbot, automatic acceptance,
-background sync or customizable dashboard configuration. An optional
-[safe-reference AI workflow](subscription-ai.md) connects a supported ChatGPT
-subscription for official public terms and placeholder structures only.
+Step 3, **Understand this month**, summarises **saved ledger facts** for a period you
+choose: a single day, a calendar month or any run of days up to three calendar months.
+It is not a Gmail parser, a bank statement or an AI dashboard. Every page view reads
+local data only, never calls Gmail or a model, and never changes saved data. There is
+no chatbot, automatic acceptance or background sync. The optional
+[safe-reference AI workflow](subscription-ai.md) is a separate tab.
+
+## Choosing a period
+
+Every page that shows month data (Connect Gmail, Saved mail, Transactions, Storage's
+restore form and this overview) has the same control:
+
+- **From** and **To** date inputs. They are the browser's own date inputs, so the
+  calendar opens from the field and the keyboard works: type the digits, or use the
+  arrow keys in the calendar.
+- Dates are **inclusive** and are **Asia/Singapore** calendar days. There is no time
+  zone setting.
+- Quick links: **This month**, **Last month** and **Last 3 months** (this month and
+  the two before it). The default is the current Singapore month.
+- One day (From equals To) up to three calendar months.
+
+### The three-month limit
+
+Internally a period is the half-open interval `[start, end)`: `end` is the day after
+the chosen last day. A range may start on any day, so it is measured on the calendar
+and never as 30 or 90 days:
+
+> The latest allowed last day is the day before *start plus three calendar months*,
+> where that date keeps the start's day number or, if the month is shorter, is moved
+> back to the last day of that month.
+
+| Start | Latest last day | Days | Reason |
+| --- | --- | --- | --- |
+| 1 Jan 2025 | 31 Mar 2025 | 90 | three whole months |
+| 31 Jan 2025 | 29 Apr 2025 | 89 | 31 Jan + 3 months = 30 Apr (April has no 31st) |
+| 1 Aug 2025 | 31 Oct 2025 | 92 | longer than 90 days is fine |
+| 1 Dec 2023 | 29 Feb 2024 | 91 | leap year |
+| 1 Dec 2024 | 28 Feb 2025 | 90 | not a leap year |
+| 29 Nov 2023 | 28 Feb 2024 | 92 | 29 Nov + 3 months = 29 Feb, so the last day is the 28th |
+| 30 Nov 2024 | 27 Feb 2025 | 90 | 30 Nov + 3 months clamps to 28 Feb |
+
+Both ends may fall in differently named months or years, such as 30 Dec 2024 to
+2 Jan 2025. Years run from 1970 to 9998.
+
+### Links and validation
+
+- A period that is exactly one calendar month keeps its month identity:
+  `/?month=2025-02`. Choosing 1 to 28 February 2025 in the date inputs is the same
+  period, shares its saved retrieval progress and displays as **February 2025**.
+  1 to 28 February 2024 is not (2024 has a 29th), so it is a range.
+- Any other period is `/?start=2025-01-31&end=2025-03-01`, with both dates inclusive.
+- Existing `?month=YYYY-MM` links, forms and saved retrieval progress keep working.
+- The server rejects with a 422 error, on every page and on every form post: a
+  reversed range, a malformed or impossible date (`2025-02-30`), a year outside
+  1970-9998, a range over the limit (the message names the latest allowed day), a
+  start without an end, an end without a start, and `month` together with
+  `start`/`end`. A form post must name its period; there is no silent default.
+- In the browser the To field's `min` and `max` follow the From date, so the browser's
+  own calendar and form validation enforce the limit and the form will not submit past
+  it. A small script (`static/period-picker.js`, no build step or external library)
+  keeps `min` and `max` in step when From changes. Without it the form still works and
+  the server decides.
+
+## Loading mail for a period
 
 1. Start `uv run --locked spending-optimiser` and open http://127.0.0.1:8765.
-2. Open **Connect Gmail** (step 1), complete the [one-time Gmail setup](gmail.md),
-   then Connect Gmail. Google consent is user-performed in the sign-in window the
-   app opens. No mail is fetched during sign-in or startup. Restore the saved
-   connection after restart.
-3. Select a calendar month and **View month**. This GET only reads SQLite.
-   **Load month** explicitly downloads up to the selected 1-5 pages of 20 IDs.
-   Default: 2 pages. Duplicate IDs count toward that per-action bound.
-4. Use **Continue month** until **Query exhausted**. A successful empty
-   nonterminal page remains incomplete. Successful candidates survive failures;
-   retry replays the unadvanced page, skipping resolved IDs. Listing, network,
-   rate-limit and authentication failures never advance the page. A message that
-   is proven undecodable (`invalid_message`) or over the response limit
-   (`response_too_large`) is retained as an unresolved ID for this account and
-   month, and later pages continue. **Retry failed messages** re-fetches only
-   those IDs, up to 20 per selected page. Unsuccessful attempts move to the end
-   of the persisted account/month retry order, so repeated bounded retries reach
-   later IDs even across restarts. Exhaustion with unresolved messages is labeled
-   incomplete coverage. Page and duplicate counts are added once per completed
-   page, not per retry. API failures, invalid/expired tokens and pagination cycles
-   are explicit. **Refresh month**
-   restarts the query while preserving/deduplicating saved data. There are no
-   automatic retries, mailbox backfills, watch/history sync or schedules.
-5. Inspect escaped saved candidate text in **Inspect saved data** (step 2). These are raw candidates, including
-   unrelated messages, not accepted transactions. Gmail receipt time uses a
-   half-open Singapore-time month (Asia/Singapore, UTC+08:00): mail received at
-   00:30 on 1 March in Singapore belongs to March, even though its UTC time is in
-   February. Month selectors default to the current Singapore month. Receipt
-   time is not the financial event date; ledger event dates stay date-only facts. Query exhaustion is
-   not proof of financial completeness or a stable mailbox snapshot. Refresh
-   does not erase previously saved mail absent from the latest provider response.
-6. Open the **Overview**, choose the financial event month, and inspect latest
-   canonical ledger records, decisions, purchase charts and exact chart tables.
-   The ledger is the independent local workspace, containing all imported sources,
-   not automatically mapped to the currently connected Gmail account. The account
-   switch only changes visible saved mail, not offline ledger history.
+2. In **Connect Gmail** (step 1), complete the [one-time Gmail setup](gmail.md) and
+   connect through the sign-in window. No mail is fetched at sign-in or startup.
+3. Choose a period and **View**. This reads SQLite only. **Load period** downloads up
+   to the chosen 1-5 pages of 20 message IDs (default 2). Duplicate IDs count toward
+   that bound.
+4. **Continue period** until **Query exhausted**. **Retry failed messages** re-fetches
+   only messages that were proven undecodable (`invalid_message`) or too large
+   (`response_too_large`), up to 20 per selected page. **Refresh period** restarts the
+   query while keeping and deduplicating saved mail.
 
-## Current extraction and privacy boundary
+Rules that apply to every period:
 
-The separate constrained model-based extraction module remains fixture-tested and
-is not wired to Gmail. The [safe-reference AI workflow](subscription-ai.md) supports
-an optional ChatGPT connection for app-captured official terms and allowlisted
-placeholder structures, never private mail. Accepted format layouts match saved
-mail locally and deterministically into unsaved, review-pending proposals on the
-Mail page. Loading and page views make no model calls or ledger changes.
-Reviewed transactions and charts still come from the offline schema import/review
-workflow. The monthly preview seeds fictional ledger records, not AI-extracted mail.
-Claude and Gemini are unavailable, with no API-billing fallback. Account-backed AI
-and real-bank format compatibility remain unverified.
+- The Gmail query uses epoch seconds for the Singapore midnights that open and close
+  the period, excluding spam and trash. A local half-open filter on Gmail's receipt
+  time then decides membership. Mail received at 00:30 on 1 March in Singapore belongs
+  to 1 March even though its UTC time is 28 February.
+- **Progress belongs to one Google account and exactly one period.** The checkpoint
+  (page token, successful IDs, unresolved IDs with codes, page and duplicate counts,
+  errors, exhaustion) is stored under the account and the period's key. A form for
+  another account or a stale connection is refused before any request is made.
+- **Coverage never spreads.** A scan covers only the period it loaded. Loading a
+  whole month does not mark one day inside it, or a range across it, as loaded, and
+  two loaded neighbouring months do not make a range across them loaded. Mail already
+  saved for any period is still listed wherever it falls, but an unscanned period says
+  **Not loaded** or **Incomplete period** until it is exhausted itself.
+- Successful candidates survive failures. A failed listing, network, rate-limit or
+  authentication error never advances the page, so Continue retries it. Unsuccessful
+  retries move to the end of the persisted order, so repeated bounded retries reach
+  later messages even across restarts. Exhaustion with unresolved messages is labelled
+  incomplete, and exhaustion is never proof of complete financial coverage or a stable
+  mailbox snapshot.
+- There are no automatic retries, mailbox backfills, watches or schedules.
+- Receipt time is Gmail's `internalDate`. It is not the financial event date, and
+  user-supplied financial facts keep their own date-only event dates.
 
-## Inclusion rules and financial meaning
+## What the overview includes
 
-- Calendar month is `[first day, first day of next month)` by `occurred_on`.
-  Posting date, Gmail receipt date, observation time and revision time are never
-  substituted.
-- Read only the latest canonical revision. Corrections replace prior facts in the
-  projection, not in history. All dated decisions appear in the monthly table.
-- Summaries require an accepted event with resolved kind, amount, event date and
-  account. Explicit duplicates, conflicting/rejected facts, pending/corrected and
-  rejected records are excluded. Review acceptance does not verify bank truth.
-- Unknown/unresolved event dates cannot be assigned to a month; their ledger-wide
-  count and links are disclosed under Inclusion & coverage. Missing amounts and
-  other exclusion reasons remain visible in the dated table and coverage details.
-- Group by the explicit `(card_id, account_id, channel)` tuple. Labels include IDs
-  so equally named accounts do not merge. Unknown card/channel stays **Card
-  unassigned / Avenue unknown**, even if an account happens to have one known
-  card. No guessing from mail, product names or account type.
-- Money uses integer minor units throughout, with the schema's 0/2/3-place display
-  exponents. Each currency has separate summaries and charts. No FX or mixed-
-  currency total exists. Even sums exceeding an individual Money's int64 limit
-  retain Python integer precision.
-- The stored schema defines **positive unsigned event magnitudes**, not signed
-  bank postings. Consequently purchases, refunds, reversals, income and transfers
-  are displayed separately, never netted. Purchase charts show purchase
-  magnitudes only. Refund/reversal linkage or `direction` does not establish
-  settlement, so no negative cashflow, net spending or account balance is invented.
-- Card/avenue bars and the daily timeline derive from the exact same included
-  purchase records. Every chart has an accessible exact-data table. Daily charts
-  omit days without included purchases, explicitly labeled. No opening balances,
-  card limits, rewards, budget assumptions or bank terms are inferred.
+- A period is `[start, end)` over each event's `occurred_on` date, a calendar date
+  with no time zone. Posting date, Gmail receipt, observation and revision times are
+  never substituted. A transaction dated 1 March belongs to a period only if that day
+  is selected.
+- Only the latest canonical revision is read. Corrections replace earlier facts in the
+  projection, not in history. Every dated record in the period appears in the table
+  with its decision.
+- Summaries count an accepted event with a resolved kind, amount, event date and
+  account. Explicit duplicates, conflicting or rejected facts, pending or corrected
+  records and rejected records are excluded and listed with the reason. Review
+  acceptance does not verify bank truth.
+- Records with no known event date cannot be placed in any period. Their ledger-wide
+  count and links are under **Coverage**.
+- Records are grouped by the explicit `(card_id, account_id, channel)` tuple. An
+  unknown card or channel stays **Card unassigned / Avenue unknown**. Nothing is
+  guessed from mail, product names or account type.
+- Money is integer minor units in the schema's 0, 2 or 3 place exponents. Each
+  currency has its own summary and charts; there is no FX or mixed-currency total.
+- Amounts are unsigned magnitudes, not bank postings. Purchases, refunds, reversals,
+  income and transfers are shown separately and never netted. Charts show purchases
+  only. No balance, net spend, reward or budget is invented.
+- The bar chart, the daily timeline, the totals, the transactions table and the
+  **Transactions** list use the same records. Each chart has an exact-data table.
+  The daily chart omits days without purchases. An empty period shows **0 results**.
+- The ledger is an independent local workspace of everything imported. It is not
+  mapped to the connected Gmail account; switching account changes only the saved
+  mail you see.
+
+## Extraction and privacy boundary
+
+The constrained model-based [extraction](extraction.md) is fixture-tested and is not
+wired to Gmail. Accepted format layouts match saved mail locally into unsaved,
+review-pending proposals on **Saved mail**. Loading and page views make no model calls
+and change no ledger facts. Reviewed transactions and charts come from the offline
+schema import and review workflow. The [AI workflow](subscription-ai.md) handles
+official public terms and placeholder structures only, never private mail.
 
 ## Saved mail and storage
 
-The existing private SQLite database now adds `mail_versions`, `mail_current` and
-`mail_scans` tables without rewriting schema records. Local database format 2
-supports verified compressed payloads; JSON schema remains 1.0.
-Saved mail (headers, message text and every retained content version) is
-locally readable SQLite data protected only by OS file access. Eligible older
-detail is losslessly compressed above 1 decimal GB; the current Singapore month
-and preceding two stay hot. See [storage measurement, restoration and recovery](storage.md).
-There is no app-level encryption.
-New databases retain owner-only file permissions. Protect backups and disk access.
-No mail is promoted to the immutable financial observation/event tables by loading.
+Saved mail (headers, text and every retained content version) is readable SQLite data
+protected only by OS file access, with no application-level encryption. Mail is
+stored per Google account by message ID. Disconnect hides saved mail and removes the
+saved authorization from `.env`, but never deletes saved mail or ledger history. See
+[Storage](storage.md) for automatic compression, restoration and recovery. The
+compression window (the current Singapore month and the two before it) is fixed and
+does not move when you choose a different period.
 
-Cache keys use the stable Google `sub` namespace plus message ID, never email
-address, subject or amount. Month checkpoints retain page tokens, successful IDs,
-unresolved failed-message IDs and codes, page/duplicate counts, last action time, errors and an exhaustion flag. Changed
-normalized mail snapshots retain previous versions; repeated identical content
-(without counting a new retrieval clock as new content) is duplicate-safe. The
-current pointer selects the most recently retrieved content even when it reverts
-to an earlier version. Stored observation IDs remain stable.
-
-Disconnect hides all saved mail, cancels sign-ins and removes saved refresh authorization from `.env`.
-**It does not delete saved mail or ledger history.** The same stable Google
-identity restores its cache; another account sees only its own mail. The default
-page never reads `.env` or authorizes a network request. `.env` access remains
-explicit Connect/Restore/Load/Disconnect actions. OS access
-is trusted; this is not multi-user access control. Saved mail is retained after
-disconnect. Compression retains older content recoverably; there is no purge or deletion action. Calendar-month
-loading is the only Gmail retrieval path.
-
-## Reproducible synthetic desktop preview
+## Synthetic desktop preview
 
 ```sh
 uv sync --locked
 uv run --locked python examples/monthly_preview.py --port 8877 --state partial
 ```
 
-Open **http://127.0.0.1:8877/?month=2025-02**. This runs the actual product with a
-disposable synthetic database, a temporary `.env`, fake authorization and fake Gmail
-transport. No normal ledger, real `.env`, real OAuth consent or network is used.
-Use **Connect Gmail**, choose February 2025, and Continue to exhaust three synthetic
-pages with 5 unique messages and 1 duplicate. The overview has 15 dated records,
-12 accepted decisions (one explicit duplicate excluded), 2 pending, 1 rejected and
-1 separately disclosed undated record. SGD purchases total **158.80** after the
-canonical grocery correction; JPY 1,234, KWD 1.234 and USD 12.99 remain separate.
-Refund 5.00, reversal 1.00, income 2,500.00 and transfer 99.99 SGD are not netted.
+Open http://127.0.0.1:8877/?month=2025-02, or any period such as
+`/?start=2025-01-31&end=2025-03-01`. The preview runs the real application against a
+disposable database, a temporary `.env`, fake authorization and a fake Gmail transport
+that answers each query from its time window. No normal ledger, real `.env`, real
+consent or network is used. Port 8765 is refused and Ctrl-C deletes the database.
+Use `--state full` or `--state empty` for other starting states.
 
-Use `--state full` for exhausted saved mail, or `--state empty` for an empty ledger
-and not-started mail. Selecting January 2024 shows a no-results month without
-changing data. Port 8765 is refused; Ctrl-C deletes the disposable database.
-These facts are explicitly seeded fictional schema records, not extracted mail.
+The seeded ledger is fictional schema records, not extracted mail:
 
-Validation: `uv run --locked pytest`, `uv run --locked ruff check .`, and
-`uv run --locked ruff format --check .`. Monthly behavior tests use disposable
-synthetic databases, fake stores/transports and no real OAuth. Live Gmail and
-real-bank extraction compatibility remain unverified.
+| Period | Result |
+| --- | --- |
+| February 2025 | 15 dated records: 12 accepted (one explicit duplicate excluded), 2 pending, 1 rejected; 1 undated record. SGD purchases SGD 158.80; JPY 1,234, KWD 1.234 and USD 12.99 stay separate; refund 5.00, reversal 1.00, income 2,500.00 and transfer 99.99 SGD are not netted. |
+| 31 Jan to 1 Mar 2025 | 17 dated records (the two boundary days add SGD 9,000.00 each); SGD purchases SGD 18,158.80. |
+| 8 Feb 2025 | 2 records, SGD 131.50. |
+| 1 to 3 Jun 2025 | 0 results. |
+
+In Connect Gmail, loading February 2025 continues three pages to 5 unique messages
+and 1 duplicate. Loading 31 Jan to 1 Mar 2025 is a separate scan that finds 7 fictional
+messages, including one received at 23:30 on 31 January and one at 00:30 on 1 March.
+
+## Validation
+
+```sh
+uv run --locked pytest
+uv run --locked ruff check .
+uv run --locked ruff format --check .
+```
+
+The tests use disposable databases, fake stores and transports, and no real OAuth.
+They cover the boundaries above (single day, the exact three-month limit with
+end-of-month clamping, leap and ordinary years, cross-month and cross-year ranges,
+Singapore midnight edges, invalid and over-limit input), period-scoped continuation,
+retry, refresh and account switching, historical month data, and agreement between
+totals, charts and tables. A browser script test compares the date picker's limit with
+the server for every day across two years. Live Gmail and real-bank extraction
+compatibility are not verified; see [Gmail](gmail.md#validation-readiness-versus-live-verification).

@@ -1,6 +1,16 @@
 # SpendingOptimiser
 
-## Original brief
+This file keeps the original brief, the confirmed follow-up requirements and the
+planned scope, and records build status. It is a history and plan, not the user guide.
+For what the app does today, read the [README](README.md) and the guides it links:
+[periods and charts](docs/monthly.md), [Gmail](docs/gmail.md),
+[local ledger and Card evidence](docs/local-ledger.md) and [storage](docs/storage.md).
+
+Sections below are marked **historical** (the request as first written), **planned**
+(requirements not yet built, unless a line says *Implemented*) or **status** (what
+exists now).
+
+## Original brief (historical)
 
 I would like to work on a new project that tracks my spending such that i can maximise rewards gain. I want to be
 able to support the cards that I use and future ones that may come in and also one time promotions that may be
@@ -29,7 +39,7 @@ Transactions should mainly come from my gmail that i route the transactions thro
 
 This should work as a service for now as an executable that runs and checks each and tallys the amount each time with a refresh button.
 
-## Confirmed follow-up requirements
+## Confirmed follow-up requirements (planned unless marked implemented)
 
 ### Initial cards and transaction source
 
@@ -79,7 +89,7 @@ Unambiguous, validated records can be accepted automatically. Ambiguous or incom
 - Report updates, pending reviews, failures, last successful check, and next run. Distinguish "0 relevant updates" from a failed or incomplete check.
 - Use configurable daily scheduling in Asia/Singapore, idempotent jobs, and catch-up after downtime. A stopped executable or powered-off machine cannot perform unattended checks without a suitable scheduler/host.
 
-## Proposed direction and implemented local subset
+## Proposed direction (planned) and implemented local subset
 
 - Implemented: one local executable/service with a server-rendered browser ledger, local-data refresh, schema-document import, and auditable manual review/correction. See [local application setup and limits](docs/local-ledger.md).
 - Modular monolith: domain calculations, application use cases, infrastructure adapters, web UI, and CLI. Reusable service boundaries do not initially require separate deployments.
@@ -89,7 +99,7 @@ Unambiguous, validated records can be accepted automatically. Ambiguous or incom
 - Use durable job state for Gmail refresh, adaptive extraction, onboarding, and daily news/term checks.
 - Detailed architecture artifact: [.lavish/project-architecture.html](.lavish/project-architecture.html).
 
-## Proposed correctness and privacy defaults
+## Proposed correctness and privacy defaults (planned)
 
 - Store money in currency-appropriate integer minor units; use Decimal arithmetic for FX and rounding rather than binary floating point.
 - Separate budget spending, actual account cash movement, and reward-eligible spend.
@@ -102,7 +112,7 @@ Unambiguous, validated records can be accepted automatically. Ambiguous or incom
 - Treat retrieved web/email content as untrusted data, never executable agent instructions.
 - Do not commit real emails, account details, OAuth tokens, local databases, or session state.
 
-## Current status and next steps
+## Current status and next steps (status)
 
 The foundational schema milestone is implemented as the importable `spending_optimiser` Python package with Pydantic validation, a pinned uv development/test setup, synthetic fixtures, automated tests and CI. It represents transaction/source/revision identities, purchase/refund/reversal/income/transfer events, personal accounts/cards separately from public products, per-field uncertainty and evidence, native rewards separately from redemption/valuation, and historical rule/evidence revisions. See [schema usage and limitations](docs/schemas.md).
 
@@ -110,14 +120,14 @@ A [constrained extraction use case](docs/extraction.md) now accepts notification
 
 A runnable offline local service now imports validated schema documents atomically into SQLite, shows the persisted event ledger and evidence, and records immutable review/correction revisions. Duplicate reimports are harmless; conflicts fail explicitly, and imports cannot overwrite local manual revisions. The bundled synthetic example exercises the whole path without credentials or an external model. See [setup, synthetic walkthrough, guarantees and limitations](docs/local-ledger.md).
 
-The read-only Gmail adapter is now wired to Google Desktop OAuth sign-in and explicit bounded, resumable Singapore-time calendar-month loading in the local browser app. Sign-in through a window opened by the Connect button, `.env` credential storage (plaintext, owner-only), refresh, account identity/isolation and disconnect are implemented; candidates are saved as readable local SQLite mail data per Google account and never become ledger transactions. A deterministic [monthly dashboard](docs/monthly.md) summarizes accepted ledger events per card/channel. Production library exchange/refresh and retrieval are synthetic end-to-end tested. Live-account consent/loading still require the user's Cloud configuration and explicit Google consent and have not been verified. See [Gmail setup, usage, privacy and limits](docs/gmail.md).
+The read-only Gmail adapter is wired to Google Desktop OAuth sign-in and explicit, bounded, resumable loading of a chosen Singapore-time period in the local browser app: one day up to three calendar months, with the exact limit documented and enforced on the server. Sign-in through a window opened by the Connect button, `.env` credential storage (plaintext, owner-only), refresh, account identity/isolation and disconnect are implemented. Candidates are saved as readable local SQLite mail data per Google account and never become ledger transactions. A deterministic [period overview](docs/monthly.md) summarizes accepted ledger events per card, account and avenue for the same period. Older detail is compressed automatically after writes once storage exceeds 1 decimal GB, with the current Singapore month and the two before it kept hot (see [storage](docs/storage.md)). Production library exchange/refresh and retrieval are synthetic end-to-end tested. Live-account consent and loading need the user's Cloud configuration and explicit Google consent and have **not** been verified; a Google sign-in problem reported on the installed app is being diagnosed separately and is not changed by the period work. See [Gmail setup, usage, privacy and limits](docs/gmail.md).
 
 See the [subscription-backed safe-reference AI workflow](docs/subscription-ai.md) for supported providers, safe inputs, proposal review and verification limits. Rewards, qualified mail-to-ledger ingestion, scheduling and a researched card-rule catalog remain separate milestones. The event ledger is not complete bank reconciliation or a rule-publication gate.
 
 Suggested build order:
 
 1. Implemented: foundational transaction, card-rule, source-evidence, and versioning schemas. Validate and refine these against independently verified examples as later capabilities are built.
-2. Implemented local subset: schema-document ingestion/review, persistence, and refresh UI. Later: qualify one bank's Gmail-to-ledger adapter, adaptive extraction, and basic monthly budget.
+2. Implemented local subset: schema-document ingestion/review, persistence, and the three-step browser UI. Later: qualify one bank's Gmail-to-ledger adapter, adaptive extraction, and basic monthly budget.
 3. Research the three current cards, verify the rule schema against their terms, and add reusable chatbot onboarding.
 4. Add daily MileLion/official-term monitoring and policy-gated rule publication.
 5. Expand reconciliation, promotion tracking, reminders, and planned-spend recommendations.

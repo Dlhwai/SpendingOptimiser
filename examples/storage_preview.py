@@ -7,6 +7,7 @@ import uvicorn
 from monthly_fixture import monthly_document
 from ui_preview import preview_app
 
+from spending_optimiser.monthly import calendar_month
 from spending_optimiser.storage import GB
 
 
@@ -15,7 +16,7 @@ def storage_app(directory, *, remain_above=False):
     app.state.ledger.import_document(monthly_document().model_dump_json())
     service = app.state.gmail
     service.connection = service.oauth.connection()
-    service.load_month("2025-02", 1, service.connection_id, "continue")
+    service.load_range(calendar_month("2025-02"), 1, service.connection_id, "continue")
     # A disposable sparse, non-WAL sidecar exercises the actual decimal-GB
     # measurement without writing a gigabyte of fictional mail. No normal DB uses
     # this fixture. SQLite is in its default DELETE journal mode, not WAL mode.
@@ -27,7 +28,7 @@ def storage_app(directory, *, remain_above=False):
     if not remain_above:
         sidecar.unlink(missing_ok=True)
     service.notice = "Synthetic saved mail compressed locally. No real mail or credentials used."
-    service.notice_month = "2025-02"
+    service.notice_range = "2025-02"
     return app
 
 

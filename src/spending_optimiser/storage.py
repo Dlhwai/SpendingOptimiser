@@ -1,6 +1,6 @@
 """Lossless, transactional cold payloads inside the existing SQLite database.
 
-Financial records stay hot: monthly_report remains the only monthly calculation.
+Financial records stay hot: range_report remains the only period calculation.
 No files are removed, no background task runs, and compression is not encryption.
 """
 
@@ -17,7 +17,7 @@ from .monthly import SINGAPORE, calendar_month
 GB = 1_000_000_000
 MAINTENANCE_WARNING = (
     "Storage maintenance could not finish. Completed writes remain saved. "
-    "Check disk space/access and retry in Storage & archives."
+    "Check disk space/access, then choose Check storage now in Storage."
 )
 MAGIC = b"SOZ1"
 HEADER = struct.Struct(">4sQ32s")
@@ -247,45 +247,47 @@ class Storage:
             result["warning"] = warning
         return result
 
-    def mail_archived(self, namespace, month):
-        """Count only this identity's selected month, including earlier versions."""
+    def mail_archived(self, namespace, period):
+        """Count only this identity's selected period, including earlier versions."""
         if namespace is None:
             return 0
         from .mail_cache import CANDIDATE
 
         count = 0
+        marks = ", ".join("?" * len(period.months))
         with self.ledger.connection() as db:
             for (payload,) in db.execute(
                 "SELECT payload FROM mail_versions WHERE namespace=? AND typeof(payload)='blob' "
-                "AND (receipt_month=? OR receipt_month IS NULL)",
-                (namespace, month.key),
+                f"AND (receipt_month IN ({marks}) OR receipt_month IS NULL)",
+                (namespace, *period.months),
             ):
                 candidate = CANDIDATE.validate_json(unpack(payload))
                 count += (
-                    month.contains(candidate.gmail_internal_at)
+                    period.contains(candidate.gmail_internal_at)
                     if candidate.gmail_internal_at
                     else 0
                 )
         return count
 
-    def restore_mail(self, namespace, month):
-        """Persist all versions of a selected account/month as ordinary text, atomically."""
+    def restore_mail(self, namespace, period):
+        """Persist all versions of a selected account/period as ordinary text, atomically."""
         if namespace is None:
             raise ValueError("Connect the saved mail account before restoring its detail")
         from .mail_cache import CANDIDATE
 
         restored = 0
+        marks = ", ".join("?" * len(period.months))
         with self.ledger.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             for identity, digest, payload in db.execute(
                 "SELECT message_id, digest, payload FROM mail_versions "
                 "WHERE namespace=? AND typeof(payload)='blob' "
-                "AND (receipt_month=? OR receipt_month IS NULL)",
-                (namespace, month.key),
+                f"AND (receipt_month IN ({marks}) OR receipt_month IS NULL)",
+                (namespace, *period.months),
             ):
                 text = unpack(payload)  # any corrupt input rolls back every restoration
                 candidate = CANDIDATE.validate_json(text)
-                if candidate.gmail_internal_at and month.contains(candidate.gmail_internal_at):
+                if candidate.gmail_internal_at and period.contains(candidate.gmail_internal_at):
                     db.execute(
                         "UPDATE mail_versions SET payload=? "
                         "WHERE namespace=? AND message_id=? AND digest=?",

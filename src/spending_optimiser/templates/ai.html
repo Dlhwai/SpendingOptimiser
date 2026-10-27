@@ -1,10 +1,10 @@
 {% extends 'base.html' %}
-{% from 'components.html' import month_tabs, provider_connect, provider_panels %}
+{% from 'components.html' import overview_tabs, provider_connect, provider_panels %}
 {% set step = 3 %}
 {% block title %}Safe AI analysis{% endblock %}
 {% block content %}
 <div class="page-head"><div><p class="eyebrow">Step 3 of 3</p><h1>Safe AI analysis</h1></div><span class="badge {{ 'accepted' if ai.connection else '' }}">{{ 'ChatGPT connected' if ai.connection else 'AI disconnected' }}</span></div>
-{{ month_tabs('ai') }}
+{{ overview_tabs('ai') }}
 {% if ai.problem %}<div class="{{ 'notice' if ai.problem == 'cancelled' else 'error-note' }}" role="{{ 'status' if ai.problem == 'cancelled' else 'alert' }}">{{ messages[ai.problem] }}</div>{% endif %}
 <section class="card" aria-label="ChatGPT connection"><h2>ChatGPT</h2>
 {% if ai.connection %}<p>{{ ai.connection.email }} · {{ ai.connection.plan }}</p><div class="actions"><form action="/ai/disconnect" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="danger">Disconnect ChatGPT</button></form></div>

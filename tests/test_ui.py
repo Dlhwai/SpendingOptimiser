@@ -75,8 +75,8 @@ def test_first_run_navigation_is_useful_offline_and_never_reads_credentials(tmp_
     assert page.attrs("a", href="/gmail")
     assert page.attrs("a", href="/", **{"aria-current": "page"})
     assert page.attrs("main", id="main", tabindex="-1")
-    assert page.attrs("form") == [{"class": "month-picker", "action": "/", "method": "get"}]
-    # The only primary form reads saved month data; imports stay secondary.
+    assert page.attrs("form") == [{"class": "period-picker", "action": "/", "method": "get"}]
+    # The only primary form reads saved period data; imports stay secondary.
     for path in ("/ledger", "/review", "/gmail", "/imports", "/public"):
         response = client.get(path)
         page = Page(response.text)
@@ -84,8 +84,14 @@ def test_first_run_navigation_is_useful_offline_and_never_reads_credentials(tmp_
         assert len(page.attrs("h1")) == 1
         assert page.attrs("a", href=path, **{"aria-current": "page"})
         assert not any(page.attrs(tag) for tag in ("iframe", "img", "link"))
-        # Only the sign-in page carries the one same-origin script; no inline script anywhere.
-        expected = [{"src": "/static/provider-connect.js"}] if path == "/gmail" else []
+        # Same-origin scripts only (sign-in, date pickers); no inline script anywhere.
+        expected = {
+            "/gmail": [
+                {"src": "/static/period-picker.js"},
+                {"src": "/static/provider-connect.js"},
+            ],
+            "/ledger": [{"src": "/static/period-picker.js"}],
+        }.get(path, [])
         assert page.attrs("script") == expected
         policy = response.headers["content-security-policy"]
         assert "default-src 'none'" in policy and "script-src 'self'" in policy
@@ -117,7 +123,7 @@ def test_mail_journey_readable_headers_limits_and_no_ledger_side_effects(tmp_pat
     client = TestClient(app, base_url="http://127.0.0.1:8876")
     response = connect(client)
     assert "alex.preview@example.invalid" in response.text
-    assert app.state.gmail.saved_month(MONTH)[0] == {}
+    assert app.state.gmail.saved_range(MONTH)[0] == {}
     load(client, app)
     response = client.get("/saved?month=2025-02")
     page = Page(response.text)
@@ -127,15 +133,17 @@ def test_mail_journey_readable_headers_limits_and_no_ledger_side_effects(tmp_pat
     )
     assert "01 Feb 2025" in response.text
     assert "Display truncated to 10,000 of" in response.text
-    assert not page.attrs("img") and not page.attrs("script")
-    assert page.attrs("input", name="month", value="2025-02")
+    assert not page.attrs("img")
+    assert page.attrs("script") == [{"src": "/static/period-picker.js"}]  # none from mail
+    assert page.attrs("input", name="start", value="2025-02-01")
+    assert page.attrs("input", name="end", value="2025-02-28")
     assert not app.state.ledger.load().transactions
     assert "4 saved candidates" in load(client, app, action="refresh").text
     assert "alex.preview@example.invalid" in client.get("/").text
     response = post(client, "/gmail/disconnect")
     assert "Gmail disconnected" in response.text
     assert "alex.preview@example.invalid" not in response.text
-    assert app.state.gmail.saved_month(MONTH) == ({}, None)
+    assert app.state.gmail.saved_range(MONTH) == ({}, None)
     assert "No saved connection" in post(client, "/gmail/restore").text
 
 
@@ -278,7 +286,7 @@ def test_monthly_preview_uses_singapore_query_and_preserves_pagination(tmp_path,
 
     app = monthly_app(tmp_path, mode)
     service = app.state.gmail
-    candidates, state = service.saved_month(MONTH)
+    candidates, state = service.saved_range(MONTH)
     expected = 2 if mode == "partial" else 5
     assert set(candidates) == {f"preview-{i}" for i in range(expected)}
     assert all(
@@ -302,7 +310,7 @@ def test_monthly_preview_uses_singapore_query_and_preserves_pagination(tmp_path,
         },
     )
     assert response.status_code == 200 and "5 saved candidates" in response.text
-    candidates, state = service.saved_month(MONTH)
+    candidates, state = service.saved_range(MONTH)
     assert set(candidates) == {f"preview-{i}" for i in range(5)}
     assert state["exhausted"] and state["pages"] == 3 and state["duplicates"] == 1
     assert state["token"] is None and state["failed"] == {}

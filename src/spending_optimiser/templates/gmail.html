@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% from 'components.html' import provider_connect, provider_panels %}
+{% from 'components.html' import period_hidden, period_picker, provider_connect, provider_panels %}
 {% set step = 1 %}
 {% block title %}Connect Gmail{% endblock %}
 {% block content %}
@@ -12,14 +12,14 @@
 {{ provider_panels('gmail', 'Google', '/gmail/connect', '/gmail/cancel', '/gmail/status', gmail.attempt, waiting, csrf) }}
 </section>
 {% if gmail.connection %}
-{% if gmail.notice and (gmail.notice_month is none or gmail.notice_month == month.key) %}<p class="notice" role="status">{{ gmail.notice }}</p>{% endif %}
-<section class="card load-panel" aria-labelledby="load-heading"><div class="section-heading"><div><h2 id="load-heading">{{ month.label }}</h2><p>{{ count }} saved candidates · {{ scan.pages }} pages completed · {{ scan.duplicates }} duplicate IDs skipped · {{ scan.failed|length }} unresolved messages</p></div><span class="badge {{ 'accepted' if scan.exhausted and not scan.failed else 'pending' }}">{{ (('Exhausted · ' ~ scan.failed|length ~ ' unresolved') if scan.failed else 'Query exhausted') if scan.exhausted else ('Incomplete month' if scan.started else 'Not loaded') }}</span></div>
-<form class="month-picker" method="get" action="/gmail"><div><label for="mail-month">Calendar month (Singapore time)</label><input id="mail-month" name="month" type="month" min="1970-01" max="9998-12" value="{{ month.key }}" required></div><button class="secondary">View month</button></form>
+{% if gmail.notice and (gmail.notice_range is none or gmail.notice_range == period.key) %}<p class="notice" role="status">{{ gmail.notice }}</p>{% endif %}
+<section class="card load-panel" aria-labelledby="load-heading"><div class="section-heading"><div><h2 id="load-heading">{{ period.label }}</h2><p>{{ count }} saved candidates · {{ scan.pages }} pages completed · {{ scan.duplicates }} duplicate IDs skipped · {{ scan.failed|length }} unresolved messages</p></div><span class="badge {{ 'accepted' if scan.exhausted and not scan.failed else 'pending' }}">{{ (('Exhausted · ' ~ scan.failed|length ~ ' unresolved') if scan.failed else 'Query exhausted') if scan.exhausted else ('Incomplete period' if scan.started else 'Not loaded') }}</span></div>
+{{ period_picker('/gmail', period, 'mail') }}
 {% if scan.errors %}<p class="error-note" role="alert">Partial / failed retrieval: {{ scan.errors|join(', ') }}</p>{% endif %}
-{% if scan.failed %}<p class="warning" role="status">{{ scan.failed|length }} messages could not be saved ({{ scan.failed.values()|unique|join(', ') }}). Month coverage is incomplete.</p>{% endif %}
+{% if scan.failed %}<p class="warning" role="status">{{ scan.failed|length }} messages could not be saved ({{ scan.failed.values()|unique|join(', ') }}). Period coverage is incomplete.</p>{% endif %}
 {% if scan.exhausted %}<p class="warning">Query exhausted, not proof of complete financial coverage.</p>{% endif %}
-<form class="load-form" action="/gmail/month" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="connection_id" value="{{ gmail.connection_id }}"><input type="hidden" name="month" value="{{ month.key }}"><div><label for="pages">Pages per action</label><select id="pages" name="pages">{% for pages in [1,2,3,4,5] %}<option value="{{ pages }}" {{ 'selected' if pages == 2 else '' }}>{{ pages }} pages · up to {{ pages * 20 }} IDs</option>{% endfor %}</select></div><div class="actions">{% if not scan.exhausted %}<button name="action" value="continue">{{ 'Continue month' if scan.started else 'Load month' }}</button>{% endif %}{% if scan.failed %}<button class="secondary" name="action" value="retry">Retry failed messages</button>{% endif %}<button class="secondary" name="action" value="refresh">Refresh month</button></div></form>
-<p class="subtle-note">Last query: {{ scan.checked_at or 'not started' }} · <a href="/saved?month={{ month.key }}">Inspect saved data</a></p></section>
+<form class="load-form" action="/gmail/month" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="connection_id" value="{{ gmail.connection_id }}">{{ period_hidden(period) }}<div><label for="pages">Pages per action</label><select id="pages" name="pages">{% for pages in [1,2,3,4,5] %}<option value="{{ pages }}" {{ 'selected' if pages == 2 else '' }}>{{ pages }} pages · up to {{ pages * 20 }} IDs</option>{% endfor %}</select></div><div class="actions">{% if not scan.exhausted %}<button name="action" value="continue">{{ 'Continue period' if scan.started else 'Load period' }}</button>{% endif %}{% if scan.failed %}<button class="secondary" name="action" value="retry">Retry failed messages</button>{% endif %}<button class="secondary" name="action" value="refresh">Refresh period</button></div></form>
+<p class="subtle-note">Last query: {{ scan.checked_at or 'not started' }} · <a href="/saved?{{ period.params|urlencode }}">Inspect saved data</a></p></section>
 {% endif %}
 {% endblock %}
-{% block scripts %}<script src="/static/provider-connect.js"></script>{% endblock %}
+{% block scripts %}<script src="/static/period-picker.js"></script><script src="/static/provider-connect.js"></script>{% endblock %}

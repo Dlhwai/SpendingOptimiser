@@ -250,21 +250,28 @@ The sidebar has three steps: **1 Connect Gmail**, **2 Inspect saved data** and
    Gmail account identity. OpenID supplies a verified stable Google `sub`, so email
    address changes do not merge identities. A namespace hashes that `sub`; message
    identities also include the Gmail message ID, never the thread or financial amount.
-4. Select a **calendar month** (Singapore time), then **Load month**. **Pages per
-   action** is 1-5 (default 2, 20 IDs/page). The fixed query uses explicit epoch
-   boundaries for Singapore-time midnights (UTC+08:00), excluding spam/trash; a local
-   half-open Singapore receipt-time filter enforces the exact month. Duplicates
-   count toward the action bound. **Continue month** resumes until the query is
-   genuinely exhausted, including successful empty nonterminal pages. Partial
-   failures retain successes and retry the same unadvanced page with resolved IDs
-   skipped. A proven per-message failure (`invalid_message` or `response_too_large`)
-   is retained as an unresolved ID so later pages still load; **Retry failed
-   messages** re-fetches only those IDs. Listing, network, rate-limit and auth
-   failures never advance. Errors, cycles and unresolved messages stay incomplete,
-   never empty or complete success. **Refresh month** restarts an expired/cycled
-   token. No automatic retries, whole-mailbox scans, scheduler or background polling
-   exist. See [monthly.md](monthly.md).
-5. **Inspect saved data** lists the month's candidates with sender, subject and Gmail
+4. Choose a **period** with the From and To dates (inclusive, Singapore time): one day,
+   a calendar month or any range up to three calendar months, or use the **This
+   month**, **Last month** and **Last 3 months** links. The exact limit and the
+   `?month=` and `?start=&end=` links are in [monthly.md](monthly.md#choosing-a-period).
+   Then choose **Load period**. **Pages per action** is 1-5 (default 2, 20 IDs/page).
+   The fixed query uses explicit epoch boundaries for the Singapore-time midnights that
+   open and close the period (UTC+08:00), excluding spam/trash; a local half-open
+   Singapore receipt-time filter enforces the exact period. Duplicates count toward
+   the action bound. **Continue period** resumes until the query is genuinely
+   exhausted, including successful empty nonterminal pages. Partial failures retain
+   successes and retry the same unadvanced page with resolved IDs skipped. A proven
+   per-message failure (`invalid_message` or `response_too_large`) is retained as an
+   unresolved ID so later pages still load; **Retry failed messages** re-fetches only
+   those IDs. Listing, network, rate-limit and auth failures never advance. Errors,
+   cycles and unresolved messages stay incomplete, never empty or complete success.
+   **Refresh period** restarts an expired/cycled token. No automatic retries,
+   whole-mailbox scans, scheduler or background polling exist.
+   Progress is stored per Google account and exact period. A scan covers only the
+   period it loaded: a month loaded earlier never marks a day or range inside or
+   around it as loaded. A form for another account, or a period that is invalid,
+   reversed, over three months or missing, is refused before any Gmail request.
+5. **Inspect saved data** lists the period's candidates with sender, subject and Gmail
    receipt time. Expand a row to view the complete subject, unverified headers and
    escaped normalized text. HTML is never executed, images never loaded, URLs never
    followed and embedded instructions never acted upon. Display is capped at 10,000
@@ -272,7 +279,7 @@ The sidebar has three steps: **1 Connect Gmail**, **2 Inspect saved data** and
    candidates locally and deterministically into unsaved, review-pending proposals.
    No model is called, nothing is added to the ledger and review decisions and
    financial facts remain unchanged.
-6. **Refresh month** restarts this month's query with bounded pages, retaining
+6. **Refresh period** restarts this period's query with bounded pages, retaining
    saved candidates and deduplicating by stable account/message identity. Changed
    content versions are preserved. Continue until exhausted again; previous
    exhaustion is not current after refresh starts. Absent/deleted provider mail
@@ -301,14 +308,15 @@ remain in `.env` (see above), keyed per ledger path digest. The sign-in window n
 one same-origin script (`script-src 'self'`, `connect-src 'self'`); the Content
 Security Policy otherwise stays `default-src 'none'`, and every app response sets
 `Cross-Origin-Opener-Policy: same-origin` so provider pages keep no handle to the app.
-**Monthly mail and checkpoints persist as readable SQLite data with no app-level
+**Saved mail and checkpoints persist as readable SQLite data with no app-level
 encryption**, scoped by stable Google identity, including headers, message text,
 every retained content version, failed-message IDs and successful-ID/page-token
 continuation. Existing ledger records stay intact. Local database format 2 supports
 verified compressed payloads, not encryption; JSON schema stays 1.0. Protect
-disk/backups. [Storage](storage.md) keeps the current Singapore month plus
-preceding two mail months uncompressed, losslessly compresses eligible older detail
-above 1 decimal GB, and can restore a selected account/month locally. Saved mail is
+disk/backups. [Storage](storage.md) keeps the current Singapore month plus the two
+before it uncompressed, whichever period you view, and compresses eligible older
+detail automatically after each write once usage is above 1 decimal GB. It can
+restore a selected account and period locally. Saved mail is
 retained indefinitely; there is no purge or deletion action. Disconnect does not
 remove the local cache or ledger history, only visible access and authorization.
 
@@ -318,7 +326,7 @@ only that identity's saved mail (no network/mail retrieval yet). Loading then
 refreshes/verifies authorization. Revoked or expired refresh/API authentication
 hides mail and asks you to reconnect. Other API/permission/rate-limit failures are
 explicit, not empty success. Switching accounts hides the prior cache; stale
-account forms cannot load into a newly selected connection. Calendar-month loading
+account forms cannot load into a newly selected connection. Explicit period loading
 is the only Gmail retrieval path.
 
 This remains a single-user, loopback-only local app. The OS user/other local
@@ -339,7 +347,11 @@ against fake HTTP, temporary dotenv files and disposable databases. Tests cover
 state/session/host/expiry/replay, nonce/scope rejection, `.env` escaping, file
 protection, atomic failure and per-ledger isolation, account switches/disconnect/
 restart, pagination/duplicates/month and page limits, 0/partial/API failures,
-escaped content and unchanged offline ledger data. `tests/test_provider_script.py`
+escaped content and unchanged offline ledger data. `tests/test_date_range.py` and
+`tests/test_date_range_flow.py` cover single-day, range and calendar-month periods
+(boundaries, leap years, Singapore midnight edges, invalid input, period-scoped
+continuation, retry, refresh and account switching, and historical month data).
+`tests/test_provider_script.py`
 runs the real sign-in script (needs Node) against a recording browser stand-in. The
 synthetic Chrome walkthrough uses a mock consent page and fake transport, not real
 Google sign-in. Reproduce it with
@@ -347,8 +359,10 @@ Google sign-in. Reproduce it with
 
 **Still requires the user:** perform the Cloud/client setup above, put the client in
 `.env`, complete explicit Google consent from the app's Connect action, and verify
-one small month load, refresh, restart/restore and disconnect with the real account.
-Also verify month continuation and persisted saved mail after restore. No
+one small period load, refresh, restart/restore and disconnect with the real account.
+Also verify continuation and persisted saved mail after restore. A Google sign-in
+problem reported on the installed app is being diagnosed separately; nothing here
+changes sign-in, and passing synthetic tests do not show that it is fixed. No
 live-account smoke verification or qualified real-bank extraction is claimed. Keep
 any real mail/screenshots outside Git and chat. Missing credentials do not prevent
 the implemented offline tests or offline ledger workflow.
