@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.parse import urldefrag, urljoin, urlsplit
 
+import certifi
+
 # Official origins checked against each issuer's own site on 25 October 2026.
 ISSUERS = {
     "dbs": {
@@ -159,7 +161,7 @@ def https_get(url, budget, resolve=socket.getaddrinfo):
         raise FetchProblem("Official host could not be resolved") from None
     if not addresses or not all(ipaddress.ip_address(a).is_global for a in addresses):
         raise FetchProblem("Official host resolved to a private or local address")
-    context = ssl.create_default_context()
+    context = ssl.create_default_context(cafile=certifi.where())
     context.sslsocket_class = deadline_socket(ssl.SSLSocket, budget)
 
     class Pinned(http.client.HTTPSConnection):
