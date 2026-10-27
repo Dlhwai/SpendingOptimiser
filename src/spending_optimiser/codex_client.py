@@ -314,10 +314,17 @@ class CodexClient:
                 raise AIProblem("connection_failed")
 
     def check_requirements(self):
-        # Managed/MDM/cloud requirements can pin values beyond the user config.
-        # This milestone qualifies unmanaged clients only, never overrides policy.
+        # The native client projects our forced_login_method into requirements.
+        # Accept only that exact pin, never additional managed/MDM/cloud policy.
         result = self.request("configRequirements/read")
-        if "requirements" not in result or result["requirements"] is not None:
+        if "requirements" not in result:
+            raise AIProblem("unsafe_configuration")
+        requirements = result["requirements"]
+        if requirements is None:
+            return
+        if not isinstance(requirements, dict) or {
+            key: value for key, value in requirements.items() if value is not None
+        } != {"allowedLoginMethods": ["chatgpt"]}:
             raise AIProblem("unsafe_configuration")
 
     def preflight(self):
