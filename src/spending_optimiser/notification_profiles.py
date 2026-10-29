@@ -107,6 +107,10 @@ def qualify(bindings, text, subject, observation, profile_context):
             return bindings, ("invalid_notification_contract",)
     claims = [b for b in bindings if b.role in {"card_claim_date", "wallet_claim_date"}]
     if not claims:
+        if profile_context and any(
+            b.role in PROFILE_ROLES and b.role != "administrative_notice" for b in bindings
+        ):
+            return bindings, ("incomplete_notification_contract",)
         return bindings, ()
     if len(claims) != 1 or re.search(
         r"(?im)^\s*(?:Fwd?:|Forwarded\s+Conversation|Begin\s+forwarded|[- ]*Forwarded\s+message)",

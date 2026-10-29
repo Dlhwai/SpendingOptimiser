@@ -463,6 +463,22 @@ def _value(role, raw):
     return raw
 
 
+def _account_reference(value, bank):
+    numeric = re.fullmatch(r"[0-9][0-9 ._-]*", value) is not None
+    symbolic = (
+        not numeric
+        and ACCOUNT_REFERENCE.fullmatch(value) is not None
+        and not re.search(r"[0-9]{8}", value)
+    )
+    masked = bool(
+        re.search(r"(?i)(?:[*x•]{2,}|ending|last\s*[0-9]|\b(?:card|credit|debit)\b)", value)
+    )
+    complete = bool(re.fullmatch(r"[0-9][0-9 -]{7,33}", value)) and bank is not None
+    if masked or not (symbolic or complete):
+        raise ValueError
+    return bank + ":" + value if complete else value
+
+
 def analyze(candidate):
     """Discover a layout from private bytes, binding only explicit supported semantics."""
     if (
@@ -568,21 +584,26 @@ def analyze(candidate):
             for m in MONEY.finditer(text)
         ):
             issues.append("unbound_monetary_value")
-        if (
-            len([b for b in found if b.role in {"kind", "purchase", "refund", "transfer"}]) > 1
-            or len([b for b in found if b.grammar.endswith("_assertion")]) > 1
-        ):
+        kinds = [b for b in found if b.role in {"kind", "purchase", "refund", "transfer"}]
+        assertions = [b for b in found if b.grammar.endswith("_assertion")]
+        headings = [b for b in kinds if b.grammar == "kind_heading"]
+        described_assertion = (
+            len(kinds) == 2
+            and len(headings) == len(assertions) == 1
+            and headings[0].value == assertions[0].role
+        )
+        if len(kinds) > 1 and not described_assertion or len(assertions) > 1:
             issues.append("multiple_event_types")
         if re.search(
             r"(?i)\b(?:declined|unsuccessful|failed|pending|cancelled|rejected|not completed)\b",
-            text,
+            (candidate.subject or "") + "\n" + text,
         ):
             issues.append("event_not_final_or_conflicting")
         # Explicit non-financial assertions cannot be bypassed by another representation.
         if re.search(
             r"(?im)^\s*(?:one.time password|OTP\s*:|transaction declined|"
             r"payment declined|balance update|promotional offer)\b",
-            text,
+            (candidate.subject or "") + "\n" + text,
         ):
             issues.append("non_financial_or_conflicting_notice")
         bindings.extend(found)
@@ -599,7 +620,24 @@ def analyze(candidate):
     for part in candidate.parts:
         selected = financial_parts.get(part.locator, [])
         if not any(
-            b.role in {"kind", "amount", "amount_number", "purchase", "refund", "transfer"}
+            b.role
+            in {
+                "kind",
+                "amount",
+                "amount_number",
+                "currency",
+                "occurred_on",
+                "posted_on",
+                "account",
+                "bank",
+                "merchant",
+                "purchase",
+                "refund",
+                "transfer",
+            }
+            or profile_context
+            and b.role in PROFILE_ROLES
+            and b.role != "administrative_notice"
             for b in selected
         ):
             continue
@@ -631,16 +669,25 @@ def analyze(candidate):
                     for b in selected
                     if b.role in {"amount", "purchase", "refund", "transfer"}
                 )
+            if role == "account":
+                banks = {b.value for b in selected if b.role == "bank"}
+                bank = next(iter(banks)) if len(banks) == 1 else None
+                try:
+                    values = [_account_reference(value, bank) for value in values]
+                except ValueError:
+                    values = []
             signature.append(tuple(sorted(set(values))))
         representations.append((part.mime_type, tuple(signature)))
     if len(representations) > 1:
         if len({mime for mime, _ in representations}) != len(representations):
             issues.append("multiple_financial_parts")
-        if any(
-            signature != representations[0][1] or any(not field for field in signature)
-            for _, signature in representations
-        ):
-            issues.append("conflicting_or_incomplete_representations")
+        if any(any(not field for field in signature) for _, signature in representations):
+            issues.append("incomplete_financial_representations")
+    if any(
+        signature != representations[0][1] or any(not field for field in signature)
+        for _, signature in representations
+    ):
+        issues.append("conflicting_or_incomplete_representations")
     nonfinancial_subject = bool(
         re.search(
             r"(?i)\b(?:verification\s+code|one.time\s+password|OTP)\b", candidate.subject or ""
@@ -678,6 +725,8 @@ def _fact(values, evidence):
 
 def facts_from(analysis, digest, observation):
     """Revalidate fields on application; self-match/repetition grants no authority."""
+    if "incomplete_financial_representations" in analysis.issues:
+        return {}, "uncertain", analysis.issues
     fields = {
         name: ([], [])
         for name in (
@@ -811,27 +860,17 @@ def facts_from(analysis, digest, observation):
     values = (() if reference.value is None else (reference.value,)) + reference.alternatives
     resolved, refs = [], reference.evidence
     for value in values:
-        numeric = re.fullmatch(r"[0-9][0-9 ._-]*", value) is not None
-        symbolic = (
-            not numeric
-            and ACCOUNT_REFERENCE.fullmatch(value) is not None
-            and not re.search(r"[0-9]{8}", value)
-        )
-        masked = bool(
-            re.search(r"(?i)(?:[*x•]{2,}|ending|last\s*[0-9]|\b(?:card|credit|debit)\b)", value)
-        )
-        complete = (
-            bool(re.fullmatch(r"[0-9][0-9 -]{7,33}", value)) and facts["bank"].value is not None
-        )
-        if masked or not (symbolic or complete):
+        try:
+            qualified = _account_reference(value, facts["bank"].value)
+        except ValueError:
             facts["account"] = Fact(
                 evidence=reference.evidence,
                 note="Identifiers do not establish complete account attribution",
             )
             issues.append("account_attribution_unresolved")
             break
-        resolved.append(facts["bank"].value + ":" + value if complete else value)
-        if complete:
+        resolved.append(qualified)
+        if qualified != value:
             refs = reference.evidence + facts["bank"].evidence
     else:
         if resolved:
