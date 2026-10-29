@@ -171,9 +171,10 @@ def test_primary_navigation_is_exactly_the_three_steps_on_every_page(journey):
 def test_existing_capabilities_stay_reachable_through_secondary_controls(journey):
     client, _, app = journey
     saved = {link["href"] for link in Layout(client.get("/saved").text).links}
-    assert {"/ledger", "/review", "/public", "/imports", "/storage"} <= {
-        href.split("?")[0] for href in saved
-    }
+    assert {"/ledger", "/public", "/imports", "/storage"} <= {href.split("?")[0] for href in saved}
+    assert "/review" not in saved
+    labels = {link["text"].strip() for link in Layout(client.get("/saved").text).links}
+    assert not {"Review queue", "Import data", "Storage"} & labels
     month = {link["href"] for link in Layout(client.get("/?month=2025-02").text).links}
     assert "/ai" in month and "/ledger" in month
     ledger = Layout(client.get("/ledger").text)

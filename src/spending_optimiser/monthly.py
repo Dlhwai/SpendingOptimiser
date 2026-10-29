@@ -177,17 +177,51 @@ def grouping(document, transaction):
     card = t.card_id.value
     account = t.account_id.value
     channel = t.channel.value
+    # Long opaque IDs remain exact grouping keys; full values are on record detail.
+    account_label = (
+        account if account is None or len(account) <= 32 else account[:12] + "..." + account[-8:]
+    )
     label = " / ".join(
         (
             f"Card {card}" if card else "Card unassigned",
-            f"{accounts[account].label} ({account})" if account else "Account unassigned",
+            f"{accounts[account].label} ({account_label})" if account else "Account unassigned",
             channel.replace("_", " ") if channel else "Avenue unknown",
         )
     )
     return (card, account, channel), label
 
 
-def range_report(document, period):
+def exclusion(t):
+    """Why a latest revision stays out of every total, or None when it is included."""
+    if t.review.status != "accepted":
+        return "Rejected" if t.review.status == "rejected" else "Pending / uncertain"
+    if t.duplicate_of:
+        return "Explicit duplicate"
+    if any(
+        getattr(t, field).status == "conflicting" or getattr(t, field).review.status == "rejected"
+        for field in CORRECTION_FIELDS
+    ):
+        return "Unresolved / rejected fact"
+    if any(
+        getattr(t, field).value is None for field in ("kind", "amount", "occurred_on", "account_id")
+    ):
+        return "Missing required fact"
+    return None
+
+
+def foreign_events(document, namespace):
+    """Events saved from a Gmail account other than the connected one (None: none connected)."""
+    sources = {o.observation_id: o for o in document.observations}
+    return {
+        t.event_id
+        for t in document.transactions
+        for origin in t.origins
+        if sources[origin.observation_id].source_system == "gmail"
+        and sources[origin.observation_id].source_namespace != namespace
+    }
+
+
+def range_report(document, period, hidden=frozenset()):
     """Never net unsigned event kinds into cashflow. Charts show purchases only."""
     rows, undated = [], []
     counts = Counter()
@@ -197,6 +231,8 @@ def range_report(document, period):
     daily = defaultdict(int)
     labels = {}
     for t in heads(document):
+        if t.event_id in hidden:
+            continue
         day = t.occurred_on.value
         if day is None:
             undated.append(t)
@@ -206,22 +242,7 @@ def range_report(document, period):
         counts[t.review.status] += 1
         group, label = grouping(document, t)
         labels[group] = label
-        reason = None
-        if t.review.status != "accepted":
-            reason = "Rejected" if t.review.status == "rejected" else "Pending / uncertain"
-        elif t.duplicate_of:
-            reason = "Explicit duplicate"
-        elif any(
-            getattr(t, field).status == "conflicting"
-            or getattr(t, field).review.status == "rejected"
-            for field in CORRECTION_FIELDS
-        ):
-            reason = "Unresolved / rejected fact"
-        elif any(
-            getattr(t, field).value is None
-            for field in ("kind", "amount", "occurred_on", "account_id")
-        ):
-            reason = "Missing required fact"
+        reason = exclusion(t)
         if reason:
             excluded[reason] += 1
         else:

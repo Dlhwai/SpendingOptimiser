@@ -1,5 +1,13 @@
 # Constrained notification extraction
 
+The app's new **automatic deterministic mail-to-ledger path** is documented in
+[automatic transactions](automatic-transactions.md). Its local structural-template
+learner reuses exact financial value validation, binds explicit supported field
+semantics and Account evidence, and never invokes a model. It also handles supported
+narrative and inert HTML representations; the standalone scanner below stays bounded. The standalone model-assisted API
+below remains proposal-only; its manual-review requirement is not the policy for
+qualifying automatic local transactions.
+
 `spending_optimiser.extraction.NotificationExtractor` is a fixture-tested use case,
 not a live AI integration or qualified bank parser. It takes notification text, an
 existing `Observation`, explicit caller-selected `AccountContext`, and revision/run
@@ -172,7 +180,7 @@ The caller must store exact private text if evidence is to remain resolvable lat
 Private evidence is never added to public `SourceEvidence`, products or card rules.
 
 There is **no replay/deduplication storage or manual-correction precedence** here.
-A later ledger integration must enforce stable observation IDs, immutable revision
+The separate automatic ledger integration enforces stable observation IDs, immutable revision
 IDs, content-change policy, deduplication, linear `supersedes` histories and manual
 correction precedence. Standalone proposals intentionally have no `supersedes`;
 recording a replay as a later revision requires the ledger's history policy.

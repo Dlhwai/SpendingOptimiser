@@ -68,6 +68,9 @@ LABELS = {
     "Posting date": "posted_on",
     "Merchant": "merchant",
 }
+# The deterministic mail path (processing.py) also accepts an explicit account reference.
+ACCOUNT_LABELS = {**LABELS, "Account": "account"}
+ACCOUNT_REFERENCE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}")
 
 
 class EvidenceSpan(Model):
@@ -185,30 +188,40 @@ def _parse_value(field: str, quote: str) -> object:
             return date.fromisoformat(value)
         except ValueError as exc:
             raise UnsupportedFormat from exc
+    if field == "account":
+        # A short opaque reference, never a full card or account number.
+        if ACCOUNT_REFERENCE.fullmatch(value) is None or re.search(r"[0-9]{8}", value):
+            raise UnsupportedFormat
+        return value
     if len(value) > 128 or not value.strip():
         raise UnsupportedFormat
     return value
 
 
-def _scan(content: str) -> SelectedFields:
-    """Independent completeness check: omitted conflicting lines cannot be hidden."""
+def _lines(content: str, labels: dict[str, str]) -> dict[str, list[EvidenceSpan]]:
+    """Every labelled line as an evidence span; any other line makes the format unsupported."""
     if any((ord(char) < 32 and char != "\n") or char in "\x7f\x85\u2028\u2029" for char in content):
         raise UnsupportedFormat
-    fields: dict[str, list[EvidenceSpan]] = {field: [] for field in LABELS.values()}
+    fields: dict[str, list[EvidenceSpan]] = {field: [] for field in labels.values()}
     offset = 0
     for line in content.splitlines(keepends=True):
         raw = line.removesuffix("\n")
         if raw:
             label, separator, value = raw.partition(": ")
-            if label not in LABELS or not separator or not value or len(raw) > 512:
+            if label not in labels or not separator or not value or len(raw) > 512:
                 raise UnsupportedFormat
-            field = LABELS[label]
+            field = labels[label]
             _parse_value(field, raw)
             fields[field].append(EvidenceSpan(start=offset, end=offset + len(raw), quote=raw))
             if len(fields[field]) > 4:
                 raise UnsupportedFormat
         offset += len(line)
-    return SelectedFields.model_validate(fields)
+    return fields
+
+
+def _scan(content: str) -> SelectedFields:
+    """Independent completeness check: omitted conflicting lines cannot be hidden."""
+    return SelectedFields.model_validate(_lines(content, LABELS))
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
@@ -234,18 +247,25 @@ def _selection(raw: object) -> ModelSelection:
     return ModelSelection.model_validate(payload)
 
 
-def _reference(observation: Observation, span: EvidenceSpan) -> EvidenceRef:
+def _reference(
+    observation: Observation, span: EvidenceSpan, source: str = "content"
+) -> EvidenceRef:
     return EvidenceRef(
         target="observation",
         evidence_revision_id=observation.observation_id,
-        locator=f"content:chars:{span.start}:{span.end}",
+        locator=f"{source}:chars:{span.start}:{span.end}",
         quote=span.quote,
     )
 
 
-def _fact(field: str, spans: tuple[EvidenceSpan, ...], observation: Observation) -> Fact:
+def _fact(
+    field: str,
+    spans: tuple[EvidenceSpan, ...],
+    observation: Observation,
+    source: str = "content",
+) -> Fact:
     values = list(dict.fromkeys(_parse_value(field, span.quote) for span in spans))
-    evidence = tuple(_reference(observation, span) for span in spans)
+    evidence = tuple(_reference(observation, span, source) for span in spans)
     if not values:
         return Fact(note="Not supplied by notification")
     if len(values) > 1:
@@ -256,6 +276,21 @@ def _fact(field: str, spans: tuple[EvidenceSpan, ...], observation: Observation)
             note="Notification contains contradictory labelled values",
         )
     return Fact(status="proposed", value=values[0], evidence=evidence)
+
+
+def notification_event_id(observation: Observation) -> str:
+    """One bounded event per notification. No amount/date identity heuristics."""
+    source_key = json.dumps(
+        [
+            observation.source_system,
+            observation.source_namespace,
+            observation.source_record_id,
+            "primary",
+        ],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    return "notification-" + hashlib.sha256(source_key.encode()).hexdigest()
 
 
 class NotificationExtractor:
@@ -366,21 +401,9 @@ class NotificationExtractor:
         posting_date = facts["posted_on"].value
         if event_date and posting_date and posting_date < event_date:
             issues.append("posting_precedes_event")
-        # One bounded event per notification. No amount/date identity heuristics.
-        source_key = json.dumps(
-            [
-                observation.source_system,
-                observation.source_namespace,
-                observation.source_record_id,
-                "primary",
-            ],
-            ensure_ascii=True,
-            separators=(",", ":"),
-        )
-        event_id = "notification-" + hashlib.sha256(source_key.encode()).hexdigest()
         transaction = Transaction.model_validate(
             {
-                "event_id": event_id,
+                "event_id": notification_event_id(observation),
                 "revision_id": run.revision_id,
                 "recorded_at": run.recorded_at,
                 "origins": (

@@ -1,14 +1,17 @@
 # Local storage and recoverable older detail
 
 The app compresses older detail by itself, so nothing needs to be run for normal
-use. The **Storage** tab under **Inspect saved data** shows measured bytes, exact
-paths, archive counts, an optional manual check and restoration of saved mail for a
-period. There is no daemon, scheduler, cloud storage, extraction or AI involved.
+use. **Saved mail > Recovery & developer tools > Storage diagnostics & lossless
+recovery** shows measured bytes, exact paths, archive counts, an optional manual
+check and restoration of saved mail for a period. There is no daemon, scheduler,
+cloud storage or AI involved.
 
 ## Compression is automatic
 
 - **When:** after each successful schema import (including the bundled example),
-  manual review or correction, and saved-mail page or failed-message retry. Other
+  manual review or correction, saved-mail page or failed-message retry, and once
+  after each automatic processing batch (including partial failures), not after
+  each transaction/revision within it. Other
   writes, such as saved AI snapshots, do not trigger it; the next write above or a
   manual check covers them. The check runs after the write is committed, in the
   request's worker thread and never on the web server's event loop.
@@ -19,7 +22,7 @@ period. There is no daemon, scheduler, cloud storage, extraction or AI involved.
   processed on the next write or manual check.
 - **If it fails:** the write stays saved and a separate **Storage maintenance could not
   finish** warning appears. Fix disk space or access, then choose **Check storage now**.
-- **Check storage now** on the Storage tab is optional. It runs the same check on
+- **Check storage now** in storage diagnostics is optional. It runs the same check on
   demand, for example to retry after a warning. Skipping it deletes nothing, and using
   it deletes nothing.
 
@@ -127,7 +130,7 @@ rows are never replaced by archive references.
 Each compression batch and each restoration is a separate `BEGIN IMMEDIATE`
 transaction: interruption commits either all replacements or none, with SQLite
 journal recovery. Failure of a compression write cannot delete the only original.
-Primary imports/reviews/mail pages commit **before** maintenance. A later SQLite
+Primary imports/reviews/mail pages/automatic transactions commit **before** maintenance. A later SQLite
 or filesystem maintenance failure preserves the successful operation and shows a
 separate **Storage maintenance could not finish** warning, not **Request not
 saved**. Do not replay the saved operation to retry maintenance: check disk space

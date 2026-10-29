@@ -358,7 +358,9 @@ def test_persistent_message_failure_does_not_block_later_pages_and_has_targeted_
     assert state["pages"] == 2 and state["duplicates"] == 1
     client = TestClient(create_app(path, gmail_service=service), base_url="http://127.0.0.1:8877")
     page = client.get("/gmail?month=2025-02").text
-    assert "Exhausted · 1 unresolved" in page and 'value="retry"' in page
+    assert (
+        "Gmail search ended" in page and "1 unresolved messages" in page and 'value="retry"' in page
+    )
     assert "invalid_message" in page and "coverage is incomplete" in page
     assert "1 unresolved messages" in client.get("/?month=2025-02").text
     calls = len(fake.calls)
@@ -387,7 +389,7 @@ def test_persistent_message_failure_does_not_block_later_pages_and_has_targeted_
         create_app(path, gmail_service=service), base_url="http://127.0.0.1:8877"
     ).get("/gmail?month=2025-02")
     assert "0 unresolved messages" in page.text
-    assert "not proof of complete financial coverage" in page.text
+    assert "not complete financial coverage" in page.text
     calls = len(fake.calls)
     load(service)
     assert len(fake.calls) == calls
@@ -627,12 +629,12 @@ def test_actual_gets_are_offline_and_chart_tables_exactly_agree_with_monthly_row
         "connection_id": service.connection_id,
     }
     response = client.post("/gmail/month", data=fields)
-    assert response.status_code == 200 and "Query exhausted" in response.text
+    assert response.status_code == 200 and "Gmail search ended" in response.text
     assert "0 results" in client.get("/saved?month=2025-02").text
-    assert "Query exhausted" in client.get("/?month=2025-02").text
+    assert "Gmail search ended" in client.get("/?month=2025-02").text
     assert 'href="/gmail?month=2025-02"' in client.get("/?month=2025-02").text
     other_month = client.get("/gmail?month=2025-03").text
-    assert "Not loaded" in other_month and "Query exhausted" not in other_month
+    assert "Not loaded" in other_month and "Gmail search ended" not in other_month
     assert (
         client.post(
             "/gmail/month", data=fields, headers={"Origin": "https://evil.invalid"}

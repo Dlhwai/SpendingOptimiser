@@ -1,0 +1,361 @@
+{
+  "forms": [
+    {
+      "parts": [
+        {
+          "mime": "text/html",
+          "rules": [
+            "administrative_notice"
+          ]
+        }
+      ],
+      "version": "local-structural-v1"
+    },
+    {
+      "parts": [
+        {
+          "mime": "text/html",
+          "rules": [
+            "amount_label"
+          ]
+        }
+      ],
+      "version": "local-structural-v1"
+    },
+    {
+      "parts": [
+        {
+          "mime": "text/html",
+          "rules": [
+            "kind_label",
+            "amount_label",
+            "date_label",
+            "account_label"
+          ]
+        }
+      ],
+      "version": "local-structural-v1"
+    },
+    {
+      "parts": [
+        {
+          "mime": "text/html",
+          "rules": [
+            "notice_transaction_reference",
+            "administrative_notice",
+            "unassigned_time_token"
+          ]
+        }
+      ],
+      "version": "local-structural-v1"
+    },
+    {
+      "parts": [
+        {
+          "mime": "text/html",
+          "rules": [
+            "notice_transaction_reference",
+            "completed_wallet_transfer",
+            "completed_wallet_transfer",
+            "notice_day_month_clock",
+            "amount_label",
+            "wallet_mobile_source",
+            "wallet_mobile_source",
+            "notice_payee"
+          ]
+        }
+      ],
+      "version": "local-structural-v1"
+    },
+    {
+      "parts": [
+        {
+          "mime": "text/html",
+          "rules": [
+            "transaction_notice",
+            "transaction_notice",
+            "notice_transaction_reference",
+            "completed_card_dmy2",
+            "completed_card_dmy2",
+            "notice_day_month_clock",
+            "amount_label",
+            "issuer_card_source",
+            "issuer_card_source",
+            "notice_payee"
+          ]
+        }
+      ],
+      "version": "local-structural-v1"
+    },
+    {
+      "parts": [
+        {
+          "mime": "text/html",
+          "rules": [
+            "transaction_notice",
+            "transaction_notice",
+            "unassigned_date_token",
+            "unassigned_date_token",
+            "amount_label",
+            "masked_identifier_token"
+          ]
+        }
+      ],
+      "version": "local-structural-v1"
+    },
+    {
+      "parts": [
+        {
+          "mime": "text/html",
+          "rules": [
+            "unassigned_date_token",
+            "amount_label",
+            "masked_identifier_token"
+          ]
+        }
+      ],
+      "version": "local-structural-v1"
+    },
+    {
+      "parts": [
+        {
+          "mime": "text/html",
+          "rules": [
+            "unassigned_date_token"
+          ]
+        }
+      ],
+      "version": "local-structural-v1"
+    },
+    {
+      "parts": [
+        {
+          "mime": "text/plain",
+          "rules": [
+            "administrative_notice"
+          ]
+        },
+        {
+          "mime": "text/html",
+          "rules": [
+            "administrative_notice"
+          ]
+        }
+      ],
+      "version": "local-structural-v1"
+    },
+    {
+      "parts": [
+        {
+          "mime": "text/plain",
+          "rules": [
+            "administrative_notice"
+          ]
+        }
+      ],
+      "version": "local-structural-v1"
+    },
+    {
+      "parts": [
+        {
+          "mime": "text/plain",
+          "rules": [
+            "amount_label",
+            "amount_label",
+            "amount_label"
+          ]
+        },
+        {
+          "mime": "text/html",
+          "rules": [
+            "amount_label",
+            "amount_label",
+            "amount_label"
+          ]
+        }
+      ],
+      "version": "local-structural-v1"
+    },
+    {
+      "parts": [
+        {
+          "mime": "text/plain",
+          "rules": [
+            "kind_label",
+            "amount_label",
+            "date_label",
+            "account_label",
+            "merchant_label"
+          ]
+        }
+      ],
+      "version": "local-structural-v1"
+    },
+    {
+      "parts": [
+        {
+          "mime": "text/plain",
+          "rules": [
+            "kind_label",
+            "amount_number_label",
+            "currency_label",
+            "date_label",
+            "account_label",
+            "merchant_label"
+          ]
+        }
+      ],
+      "version": "local-structural-v1"
+    },
+    {
+      "parts": [
+        {
+          "mime": "text/plain",
+          "rules": [
+            "purchase_assertion",
+            "event_on",
+            "account_for"
+          ]
+        }
+      ],
+      "version": "local-structural-v1"
+    },
+    {
+      "parts": [
+        {
+          "mime": "text/plain",
+          "rules": [
+            "unassigned_date_token",
+            "transaction_notice",
+            "transaction_notice",
+            "unassigned_date_token",
+            "unassigned_date_token",
+            "amount_label",
+            "masked_identifier_token",
+            "unassigned_date_token",
+            "transaction_notice",
+            "transaction_notice",
+            "unassigned_date_token",
+            "unassigned_date_token",
+            "amount_label",
+            "masked_identifier_token",
+            "unassigned_date_token",
+            "transaction_notice",
+            "transaction_notice",
+            "unassigned_date_token",
+            "unassigned_date_token",
+            "amount_label",
+            "masked_identifier_token"
+          ]
+        },
+        {
+          "mime": "text/html",
+          "rules": [
+            "unassigned_date_token",
+            "transaction_notice",
+            "transaction_notice",
+            "unassigned_date_token",
+            "unassigned_date_token",
+            "amount_label",
+            "masked_identifier_token",
+            "unassigned_date_token",
+            "transaction_notice",
+            "transaction_notice",
+            "unassigned_date_token",
+            "unassigned_date_token",
+            "amount_label",
+            "masked_identifier_token",
+            "unassigned_date_token",
+            "transaction_notice",
+            "transaction_notice",
+            "unassigned_date_token",
+            "unassigned_date_token",
+            "amount_label",
+            "masked_identifier_token"
+          ]
+        }
+      ],
+      "version": "local-structural-v1"
+    },
+    {
+      "parts": [
+        {
+          "mime": "text/plain",
+          "rules": [
+            "unassigned_date_token",
+            "unassigned_time_token",
+            "notice_payee",
+            "transaction_notice",
+            "transaction_notice",
+            "notice_transaction_reference",
+            "completed_card_dmy2",
+            "notice_day_month_clock",
+            "amount_label",
+            "issuer_card_source",
+            "notice_payee",
+            "unassigned_date_token",
+            "unassigned_time_token",
+            "notice_payee",
+            "transaction_notice",
+            "transaction_notice",
+            "notice_transaction_reference",
+            "completed_card_dmy2",
+            "notice_day_month_clock",
+            "amount_label",
+            "issuer_card_source",
+            "notice_payee",
+            "unassigned_date_token",
+            "unassigned_time_token",
+            "notice_payee",
+            "transaction_notice",
+            "notice_transaction_reference",
+            "completed_card_dmy2",
+            "notice_day_month_clock",
+            "amount_label",
+            "issuer_card_source",
+            "notice_payee"
+          ]
+        },
+        {
+          "mime": "text/html",
+          "rules": [
+            "unassigned_date_token",
+            "unassigned_time_token",
+            "notice_payee",
+            "transaction_notice",
+            "transaction_notice",
+            "notice_transaction_reference",
+            "completed_card_dmy2",
+            "notice_day_month_clock",
+            "amount_label",
+            "issuer_card_source",
+            "notice_payee",
+            "unassigned_date_token",
+            "unassigned_time_token",
+            "notice_payee",
+            "transaction_notice",
+            "transaction_notice",
+            "notice_transaction_reference",
+            "completed_card_dmy2",
+            "notice_day_month_clock",
+            "amount_label",
+            "issuer_card_source",
+            "notice_payee",
+            "unassigned_date_token",
+            "unassigned_time_token",
+            "notice_payee",
+            "transaction_notice",
+            "notice_transaction_reference",
+            "completed_card_dmy2",
+            "notice_day_month_clock",
+            "amount_label",
+            "issuer_card_source",
+            "notice_payee"
+          ]
+        }
+      ],
+      "version": "local-structural-v1"
+    }
+  ],
+  "version": "local-structural-v1"
+}

@@ -1,12 +1,10 @@
-# Local import and review milestone
+# Local ledger, corrections and optional recovery
 
-This is an offline schema-document importer with a persisted notification-event
-ledger. It is **not** a bank-email parser, Gmail connector, complete bank
-reconciliation, reward calculator, or live card-rule catalog. This offline ledger
-workflow makes no network or model calls. The separate [Gmail connection and
-candidate-loading UI](gmail.md) can now make user-authorized Google requests;
-it never imports mail as transactions or alters financial review decisions. All bundled data is synthetic, including its unverified card-rule
-examples. Supplied real card names remain unresolved labels.
+The canonical notification-event ledger receives [supported automatic transactions](automatic-transactions.md)
+after explicit Gmail loading. This guide also preserves the optional offline
+schema-document recovery/import walkthrough; it makes no network or model calls.
+There is no complete bank reconciliation, reward calculator or live card-rule catalog. Bundled financial examples are synthetic, including the unverified card rules.
+Generic template assets contain only closed MIME/field-role tokens, never source values. Supplied real card names remain unresolved labels.
 
 ## Setup and one start command
 
@@ -44,7 +42,7 @@ material, credentials, screenshots containing financial data, or exports.
 
 ## Complete synthetic browser workflow
 
-1. From **Inspect saved data**, open the **Import data** tab and click **Import bundled synthetic
+1. For this optional developer/recovery walkthrough, open **Saved mail > Recovery & developer tools > Restore / import a schema snapshot**, then **Import bundled synthetic
    example**. This imports the exact synthetic schema fixture bundled with the package. Alternatively, upload
    `tests/fixtures/synthetic.json` using **Import a schema document**. Both paths
    run the same validation and persistence code. Paste JSON or upload a file, not
@@ -55,7 +53,7 @@ material, credentials, screenshots containing financial data, or exports.
    public products/evidence/rules and private accounts/cards/observations/events.
    The purchase is SGD 1234 **minor units** (SGD 12.34). See the [monthly inclusion
    rules](monthly.md#what-the-overview-includes) for summary eligibility.
-3. Open **Review queue**, then **test-purchase**. Inspect per-field uncertainty,
+3. Open **Transactions**, then **test-purchase**. Inspect per-field uncertainty,
    evidence locators, the private synthetic observation, and the original history.
    Unknown posting date, merchant, MCC, and other optional values are not inferred.
 4. Choose **Review this event**, enter a reviewer and reason, and expand **Correct
@@ -66,15 +64,15 @@ material, credentials, screenshots containing financial data, or exports.
    {"status":"proposed","value":"Synthetic cafe"}
    ```
 
-   Leave the action as **Save correction, keep in review queue** and submit.
+   Leave the action as **Save correction, keep excluded** and submit.
    Expect a new `local-...` revision, a correction audit entry, and the unchanged
    original revision. `proposed` is intentional: a correction is not automatically
    verified source truth. To retain or add field evidence, include an `evidence`
    array with existing source/observation ids and locators.
 5. On the refreshed detail page, enter a reviewer and reason again, leave the
    correction field and JSON empty, select **Accept resolved event**, and submit.
-   Expect a third review revision and **0 results** in the review queue.
-6. Return to **Import data** and reimport the bundled example. Expect **0 new records**,
+   Expect a third review revision and an accepted canonical event.
+6. Return to the optional snapshot-import form and reimport the bundled example. Expect **0 new records**,
    **11 unchanged records**, one canonical event, and the manual merchant still
    present. Stop and restart the service with the same database path; all three
    transaction revisions and the accepted head remain.
@@ -110,7 +108,8 @@ What it is **not**:
   no rewards from these rules.
 - Not a researched catalogue. The app does not look cards up for you.
 
-Records arrive only through **Import data**, which accepts a schema document. The
+These public records arrive only through optional schema-document import in the
+**Recovery & developer tools** disclosure; mail extraction does not create card rules. The
 bundled synthetic example adds the three unresolved card names plus one fictional
 product, one fictional evidence record and one fictional rule set (4 products,
 1 evidence and 1 rule). Until something is imported each group shows **0 results**.
@@ -126,14 +125,15 @@ The sidebar has exactly three steps; related views are tabs on their step.
    up to three calendar months) with retrieval state kept per account and period.
    See [periods and charts](monthly.md).
 2. **Inspect saved data**, with tabs:
-   - **Saved mail**: persistent candidates, separate from ledger events.
+   - **Saved mail**: persistent source messages with inline processing outcomes and
+     links to transactions/evidence. Supported unambiguous messages are accepted
+     automatically; other formats and uncertain entries are flagged and excluded.
    - **Transactions**: all canonical ledger events, including accepted/rejected ones.
      Open an event for facts, source evidence, review/correction and immutable history.
-   - **Review queue**: events needing a decision. Reviewer, reason and action are
-     primary; complete Fact JSON correction is available in an optional disclosure.
-   - **Card evidence** (see above), **Import data** and **Storage**: public reference
-     data, advanced snapshot import, and automatic compression with restoration of
-     older detail.
+   - **Card evidence** (see above): public reference data.
+   - No Review queue, Import data or Storage routine tabs. Correction/rejection is
+     optional at event detail; snapshot import and storage recovery remain under
+     Saved mail's **Recovery & developer tools** disclosure.
 3. **Understand this month**, with tabs **Overview** (canonical transactions for the
    chosen period, decision counts, separate currency/kind magnitudes, purchase
    grouping and daily charts, with exclusions) and **Safe AI analysis**. All data comes
@@ -175,8 +175,8 @@ disposable synthetic preview for safe UI exploration.
   changed fact also records `Correction` metadata and a field review. No-op
   corrections and edits to identity/origins are rejected. Only one fact is edited
   per action; multiple missing facts can be corrected in successive revisions.
-- Pending/corrected events and events with conflicting fields appear in the
-  queue, unless the current revision rejects the event. Rejection is event-level:
+- Pending/corrected events and events with conflicting fields stay visible inline
+  in Transactions/Saved mail, excluded from totals. No separate review step is required. Rejection is event-level:
   it carries every fact (including corrected or conflicting ones) forward
   unchanged and cannot be combined with a fact correction. Acceptance needs
   resolved kind, positive amount, event date, and known account, plus all
