@@ -20,7 +20,7 @@ from .extraction import ACCOUNT_REFERENCE, EVENT_KINDS, MAX_NOTIFICATION_CHARS, 
 from .notification_profiles import PROFILE_CLAIM, PROFILE_ROLES, PROFILE_RULES, qualify
 
 VERSION = "local-structural-v1"
-LEARNING_REVISION = "local-learning-v4"
+LEARNING_REVISION = "local-learning-v5"
 DISCOVERY_REVISION = "template-discovery-" + LEARNING_REVISION
 MAX_PARTS = 8
 MAX_TOTAL_CHARS = 65536
@@ -48,11 +48,15 @@ KINDS = {
     "funds transfer": "transfer",
     "paynow transfer": "transfer",
 }
-NUMBER = r"(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,19})(?:\.[0-9]{1,3})?"
-MONEY_END = r"(?=[.;:!?]?(?:\s|$))"
+NUMERIC_CONTINUATION = r"(?:[.,]?\s+(?:[+-]\s*)?(?:[0-9]|\.[0-9])|\s+[.,]\s*[0-9])"
+NUMBER = (
+    r"(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,19})(?:\.[0-9]{1,3})?"
+    rf"(?!{NUMERIC_CONTINUATION})"
+)
+MONEY_END = rf"(?!{NUMERIC_CONTINUATION})(?=[.;:!?]?(?:\s|$))"
 MONEY = re.compile(
     rf"(?<![\w.+-])(?P<currency>{'|'.join(CURRENCY_EXPONENTS)}|S\$)\s*"
-    rf"(?P<number>[+-]?[0-9]\S*?){MONEY_END}"
+    rf"(?P<number>[+-]?[0-9]\S*?(?:(?={NUMERIC_CONTINUATION})\s+\S+)*?){MONEY_END}"
 )
 ASSERTION_START = re.compile(
     r"(?im)^[^\S\n]*(?P<assertion>"

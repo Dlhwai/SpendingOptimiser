@@ -616,6 +616,21 @@ MALFORMED_MAGNITUDES = [
     "+19.25",
     "19.25/2",
     "19.25_suffix",
+    "1 234.50",
+    "1  234.50",
+    "1\t234.50",
+    "1\u00a0234.50",
+    "1\u202f234.50",
+    "1\n234.50",
+    "1\r\n234.50",
+    "1 234 567",
+    "19. 25",
+    "19 .25",
+    "19 . 25",
+    "1, 234.50",
+    "1 ,234.50",
+    "19.25 -1",
+    "19.25 + 1",
 ]
 
 
@@ -650,6 +665,88 @@ def test_unsupported_competing_debit_credit_assertions_cannot_disappear(verb, va
     facts, _, outcome, reasons = extract(saved, "invalid-debit", saved.observation)
     assert outcome == "uncertain" and "invalid_explicit_field" in reasons
     assert facts["amount"].value.minor_units == 1234
+
+
+@pytest.mark.parametrize(
+    "amount_field",
+    ["Amount: SGD {number}", "Amount: {number}\nCurrency: SGD", "Amount (SGD): {number}"],
+)
+@pytest.mark.parametrize("number", ["1\n234.50", "1\n\t234.50", "1.\n25", "1\n\n234.50"])
+def test_numeric_continuations_cannot_escape_labelled_amount_values(amount_field, number):
+    control = BODY.replace("Amount: SGD 12.34", amount_field.format(number="1,234.50"))
+    fake = Notifications({"one": control})
+    adapter = GmailAdapter(fake, "synthetic-multiline-money")
+    saved = adapter.get_candidate("one").candidate
+    facts, _, outcome, _ = extract(saved, "valid-labelled-grouping", saved.observation)
+    assert outcome == "accepted" and facts["amount"].value.minor_units == 123450
+    fake.bodies["one"] = BODY.replace("Amount: SGD 12.34", amount_field.format(number=number))
+    saved = adapter.get_candidate("one").candidate
+    facts, _, outcome, reasons = extract(saved, "continuing-labelled-number", saved.observation)
+    assert outcome == "uncertain" and facts["amount"].value is None
+    assert "invalid_explicit_field" in reasons
+    if amount_field.startswith("Amount: SGD"):
+        assert "unbound_monetary_value" in reasons
+
+
+@pytest.mark.parametrize("whitespace", [" ", "\t", "\u00a0", "\u202f", "\n"])
+@pytest.mark.parametrize("representation", ["plain", "html", "alternative"])
+def test_saved_numeric_continuations_are_inspectable_and_never_counted(
+    tmp_path, whitespace, representation
+):
+    from html import escape
+
+    service, fake, client = setup(
+        tmp_path, {"one": NARRATIVE, "two": NARRATIVE.replace("19.25", "10.00")}
+    )
+    original_message = fake.get_message
+
+    def represent(identity):
+        message = original_message(identity)
+        if representation != "plain":
+            raw = "".join(
+                f"<p>{escape(line)}</p>" for line in fake.bodies[identity].splitlines()
+            ).encode()
+            html = {
+                "mimeType": "text/html",
+                "body": {"size": len(raw), "data": base64.urlsafe_b64encode(raw).decode()},
+            }
+            message["payload"] = (
+                html
+                if representation == "html"
+                else {"mimeType": "multipart/alternative", "parts": [message["payload"], html]}
+            )
+        return message
+
+    fake.get_message = represent
+    original = load(service)
+    assert total(original, currency="USD") == 2925
+    previous = next(t for t in heads(original) if t.amount.value.minor_units == 1925)
+    old_digest = previous.amount.evidence[0].locator.split(":")[1]
+    fake.bodies["one"] = NARRATIVE.replace("19.25", "1" + whitespace + "234.50")
+    document = load(service, "refresh")
+    changed = next(t for t in heads(document) if t.event_id == previous.event_id)
+    assert changed.review.status == "pending" and changed.amount.value is None
+    assert total(document, currency="USD") == 1000
+    assert document.transactions[:2] == original.transactions
+    assert "Excluded from totals" in client.get("/saved?month=2025-02").text
+    digest = changed.kind.evidence[0].locator.split(":")[1]
+    saved = service.cache.version(service.namespace, "one", digest)
+    assert saved.parts == candidate(service, fake).parts
+    templates = LocalTemplates(service.cache)
+    result = templates.apply(service.namespace, "one", digest, saved, saved.observation)
+    assert result[1] != "accepted" and "invalid_financial_assertion" in result[2]
+    assert all(
+        apply_generic(form, saved, digest, saved.observation)[1] != "accepted"
+        for form in templates.generic_forms()["forms"]
+    )
+    for version in (old_digest, digest):
+        response = client.get(
+            "/mail-source",
+            params={"observation_id": previous.origins[0].observation_id, "version": version},
+        )
+        assert response.status_code == 200
+        assert ("19.25" if version == old_digest else "234.50") in response.text
+    assert load(service, "refresh") == document
 
 
 def test_unspaced_purchase_assertion_cannot_hide_an_unsupported_amount():
@@ -696,7 +793,16 @@ def test_monetary_scanner_retains_unsupported_competing_magnitudes(magnitude):
 @pytest.mark.parametrize("punctuation", ["", ".", ";", ":", "!", "?"])
 @pytest.mark.parametrize(
     "money, code, minor",
-    [("USD 1,234.56", "USD", 123456), ("JPY 19", "JPY", 19), ("KWD 19.250", "KWD", 19250)],
+    [
+        ("USD 1,234.56", "USD", 123456),
+        ("JPY 19", "JPY", 19),
+        ("KWD 19.250", "KWD", 19250),
+        ("USD 1", "USD", 100),
+        ("USD 1234.50", "USD", 123450),
+        ("JPY 1,234", "JPY", 1234),
+        ("USD\u00a01,234.50", "USD", 123450),
+        ("S$ 12.34", "SGD", 1234),
+    ],
 )
 def test_valid_narrative_money_precision_boundaries_and_spans(punctuation, money, code, minor):
     body = (
