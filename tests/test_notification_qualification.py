@@ -4,7 +4,7 @@ import base64
 from html import escape
 
 import pytest
-from test_local_templates import NARRATIVE, candidate
+from test_local_templates import candidate
 from test_notification_profiles import CARD, WALLET
 from test_processing import BODY, Notifications, load, setup, total
 
@@ -255,7 +255,10 @@ def test_r13_reconciliation_does_not_disable_conflict_or_assertion_cardinality(k
     else:
         second = assertion if change == "repeated" else assertion.replace("19.25", "20.00")
         if change == "mixed":
-            second = "An amount of USD 19.25 was credited on 3 February 2025 using account reference travel-wallet."
+            second = (
+                "An amount of USD 19.25 was credited on 3 February 2025 "
+                "using account reference travel-wallet."
+            )
         body = headings[kind] + "\n" + assertion + "\n" + second
     _, result = inspect(body)
     assert result[2] != "accepted" and result[3]
