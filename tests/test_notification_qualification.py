@@ -308,6 +308,144 @@ def test_r14_failure_subjects_exclude_success_shaped_bodies(tmp_path, body, kind
     assert load(service, "refresh") == document
 
 
+@pytest.mark.parametrize("body, kind, minor", LAYOUTS)
+@pytest.mark.parametrize("fragment", ["Card/Acct No.: ****1234", "Transaction Alert"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_r15_all_consumed_financial_roles_require_qualified_representations(
+    tmp_path, body, kind, minor, fragment, reverse
+):
+    for other in (None, body, "Fictional delivery footer"):
+        _, control = inspect(body, other, reverse=reverse)
+        assert control[2] == "accepted" and control[0]["amount"].value.minor_units == minor
+    saved, result = inspect(body, fragment, reverse=reverse)
+    assert result[2] == "uncertain" and "incomplete_financial_representations" in result[3]
+    assert result[0] == {} and result[1] == []
+    service, fake, client = setup(tmp_path, {"one": body})
+    state = render(fake, body, reverse=reverse)
+    original = load(service)
+    assert total(original, kind=kind) == minor
+    state["other"] = fragment
+    document = load(service, "refresh")
+    assert total(document, kind=kind) == 0 and heads(document)[0].review.status == "pending"
+    assert document.transactions[0] == original.transactions[0]
+    saved = candidate(service, fake)
+    with service.cache.ledger.connection() as db:
+        digest = db.execute("SELECT digest FROM mail_current WHERE message_id='one'").fetchone()[0]
+    templates = LocalTemplates(service.cache)
+    assert (
+        templates.apply(service.namespace, "one", digest, saved, saved.observation)[1]
+        == "uncertain"
+    )
+    results = [
+        apply_generic(form, saved, digest, saved.observation)
+        for form in templates.generic_forms()["forms"]
+    ]
+    assert results and all(result[1] != "accepted" for result in results)
+    assert service.cache.version(service.namespace, "one", digest).parts == saved.parts
+    text = client.get("/saved?month=2025-02").text
+    assert "Excluded from totals" in text and fragment in text
+    assert load(service, "refresh") == document
+
+
+@pytest.mark.parametrize(
+    "fragment", ["2025-02-03", "09:15", "****1234", "Fictional delivery footer"]
+)
+def test_r15_inert_structural_slots_remain_irrelevant(fragment):
+    _, result = inspect(BODY, fragment)
+    assert result[2] == "accepted" and result[0]["amount"].value.minor_units == 1234
+
+
+@pytest.mark.parametrize("fragment", ["Card/Acct No.: ****1234", "Transaction Alert"])
+def test_r15_attachments_do_not_become_financial_representations(fragment):
+    fake = Notifications({"one": BODY})
+    original = fake.get_message
+
+    def with_attachment(identity):
+        message = original(identity)
+        raw = fragment.encode()
+        message["payload"] = {
+            "mimeType": "multipart/mixed",
+            "parts": [
+                message["payload"],
+                {
+                    "mimeType": "text/plain",
+                    "filename": "fictional.txt",
+                    "body": {"size": len(raw), "data": base64.urlsafe_b64encode(raw).decode()},
+                },
+            ],
+        }
+        return message
+
+    fake.get_message = with_attachment
+    saved = GmailAdapter(fake, "synthetic-attachment-control").get_candidate("one").candidate
+    assert len(saved.parts) == 1
+    assert extract(saved, "synthetic-attachment", saved.observation)[2] == "accepted"
+
+
+@pytest.mark.parametrize("body, kind, minor", LAYOUTS)
+@pytest.mark.parametrize(
+    "other_subject",
+    [
+        "Payment declined",
+        "Verification code",
+        "Fwd: Fictional confirmation",
+        "Refund notification",
+        "Another ordinary confirmation",
+    ],
+)
+@pytest.mark.parametrize("reverse", [False, True])
+def test_r16_ambiguous_subject_diagnosis_remains_uncertainty(
+    tmp_path, body, kind, minor, other_subject, reverse
+):
+    service, fake, client = setup(tmp_path, {"one": body})
+    original_message = fake.get_message
+    subjects = []
+
+    def with_subjects(identity):
+        message = original_message(identity)
+        message["payload"]["headers"] = [{"name": "Subject", "value": value} for value in subjects]
+        return message
+
+    fake.get_message = with_subjects
+    subjectless = candidate(service, fake)
+    assert subjectless.subject is None and "ambiguous_subject" not in subjectless.warnings
+    assert extract(subjectless, "genuinely-subjectless", subjectless.observation)[2] == "accepted"
+    subjects[:] = ["Fictional successful notification"]
+    original = load(service)
+    assert total(original, kind=kind) == minor
+    subjects[:] = ["Fictional successful notification", other_subject]
+    if reverse:
+        subjects.reverse()
+    saved = candidate(service, fake)
+    assert saved.subject is None and "ambiguous_subject" in saved.warnings
+    assert [header.value for header in saved.headers if header.name == "subject"] == subjects
+    facts, _, outcome, reasons = extract(saved, "ambiguous-subject", saved.observation)
+    assert outcome == "uncertain" and "ambiguous_subject" in reasons
+    assert facts["amount"].value.minor_units == minor
+    document = load(service, "refresh")
+    assert total(document, kind=kind) == 0 and heads(document)[0].review.status == "pending"
+    assert document.transactions[0] == original.transactions[0]
+    assert "ambiguous_subject" in heads(document)[0].review.reason
+    with service.cache.ledger.connection() as db:
+        digest = db.execute("SELECT digest FROM mail_current WHERE message_id='one'").fetchone()[0]
+    retained = service.cache.version(service.namespace, "one", digest)
+    assert retained.headers == saved.headers and retained.warnings == saved.warnings
+    templates = LocalTemplates(service.cache)
+    assert (
+        "ambiguous_subject"
+        in templates.apply(service.namespace, "one", digest, saved, saved.observation)[2]
+    )
+    results = [
+        apply_generic(form, saved, digest, saved.observation)
+        for form in templates.generic_forms()["forms"]
+    ]
+    assert results and all(result[1] != "accepted" for result in results)
+    text = client.get("/saved?month=2025-02").text
+    assert all(escape(subject) in text for subject in subjects)
+    assert "ambiguous_subject" in text and "Excluded from totals" in text
+    assert load(service, "refresh") == document
+
+
 @pytest.mark.parametrize("missing", GENERIC_CORES[0])
 def test_r14_subject_does_not_supply_missing_financial_facts(missing):
     body = "\n".join(line for line in GENERIC_CORES[0] if line != missing)

@@ -1,5 +1,6 @@
 """The local-qualification output is a fixed counter/error contract, not a mail dump."""
 
+import base64
 import json
 import os
 import sqlite3
@@ -8,11 +9,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from test_local_templates import NARRATIVE
 from test_processing import PERIOD, setup
 
 from spending_optimiser.gmail import GmailAdapter
-from spending_optimiser.local_templates import validate_generic
+from spending_optimiser.local_templates import apply_generic, validate_generic
 
 SCRIPT = Path(__file__).parents[1] / "tools" / "qualify_saved_templates.py"
 KEYS = {
@@ -125,3 +127,112 @@ def test_private_invalid_rows_and_schema_failures_never_escape_as_diagnostics(tm
         and missing.stdout == "error: source_missing\n"
         and missing.stderr == ""
     )
+
+
+def synthetic_qualification_source(tmp_path, batch):
+    bodies = {
+        "valid": "SYNTHETIC_VALID_NOT_EXPORTED\n" + NARRATIVE,
+        "partial": "SYNTHETIC_PARTIAL_NOT_EXPORTED\nType: Purchase\nAmount: SGD 12.34",
+        "unreadable": "SYNTHETIC_UNREADABLE_NOT_EXPORTED",
+    }
+    service, fake, _ = setup(tmp_path, {key: bodies[key] for key in batch})
+    original = fake.get_message
+
+    def with_partial(identity):
+        message = original(identity)
+        if identity == "partial":
+            raw = b"<p>Event date: 2025-02-03</p><p>Account: wallet-blue</p>"
+            message["payload"] = {
+                "mimeType": "multipart/alternative",
+                "parts": [
+                    message["payload"],
+                    {
+                        "mimeType": "text/html",
+                        "body": {"size": len(raw), "data": base64.urlsafe_b64encode(raw).decode()},
+                    },
+                ],
+            }
+        return message
+
+    fake.get_message = with_partial
+    adapter = GmailAdapter(fake, service.namespace)
+    saved = {key: adapter.get_candidate(key).candidate for key in batch}
+    service.cache.save(service.namespace, PERIOD, {}, list(saved.values()))
+    if "unreadable" in batch:
+        with service.cache.ledger.connection() as db:
+            db.execute(
+                "UPDATE mail_versions SET payload=? WHERE message_id='unreadable'",
+                (b"SYNTHETIC_CORRUPT_NOT_EXPORTED",),
+            )
+    return service, saved
+
+
+@pytest.mark.parametrize(
+    "batch", [("valid",), ("partial",), ("valid", "partial"), ("valid", "partial", "unreadable")]
+)
+@pytest.mark.parametrize("export", [False, True])
+def test_empty_uncertain_facts_produce_complete_truthful_qualification_counts(
+    tmp_path, batch, export
+):
+    service, saved = synthetic_qualification_source(tmp_path, batch)
+    source = service.cache.ledger.path
+    before = source.read_bytes()
+    directory = tmp_path / "synthetic-qualification"
+    output = directory / "generic.json" if export else None
+    result = invoke(source, directory, output=output)
+    assert result.returncode == 0 and result.stderr == ""
+    counts = {
+        key: int(value.strip())
+        for key, value in (line.split(":", 1) for line in result.stdout.splitlines())
+    }
+    expected = dict.fromkeys(KEYS, 0)
+    expected.update(
+        versions_examined=len(batch),
+        examined=len(batch),
+        templates_learned=sum(key != "unreadable" for key in batch),
+        supported=int("valid" in batch),
+        uncertain=int("partial" in batch),
+        unreadable=int("unreadable" in batch),
+        unresolved_kind=int("partial" in batch),
+        unresolved_amount=int("partial" in batch),
+        unresolved_event_date=int("partial" in batch),
+        unresolved_account=int("partial" in batch),
+    )
+    assert counts == expected
+    assert source.read_bytes() == before
+    assert str(source) not in result.stdout and service.namespace not in result.stdout
+    assert "SYNTHETIC_" not in result.stdout
+    with service.cache.ledger.connection() as db:
+        assert db.execute("SELECT count(*) FROM private_records").fetchone()[0] == 0
+        assert not db.execute("SELECT 1 FROM sqlite_master WHERE name='mail_templates'").fetchone()
+    if export:
+        asset = json.loads(output.read_text())
+        assert asset["forms"] and all(validate_generic(form) for form in asset["forms"])
+        assert (
+            "SYNTHETIC_" not in output.read_text() and service.namespace not in output.read_text()
+        )
+        assert stat.S_IMODE(output.stat().st_mode) == 0o600
+        if "valid" in batch:
+            positive = saved["valid"]
+            assert any(
+                apply_generic(form, positive, "synthetic-version", positive.observation)[1]
+                == "accepted"
+                for form in asset["forms"]
+            )
+        if "partial" in batch:
+            partial = saved["partial"]
+            assert all(
+                apply_generic(form, partial, "synthetic-version", partial.observation)[1]
+                != "accepted"
+                for form in asset["forms"]
+            )
+    else:
+        assert not (directory / "generic.json").exists()
+
+
+def test_uncertain_empty_facts_do_not_bypass_generic_export_directory_eligibility(tmp_path):
+    service, _ = synthetic_qualification_source(tmp_path, ("partial",))
+    outside = tmp_path / "outside-protected-directory.json"
+    result = invoke(service.cache.ledger.path, tmp_path / "protected-copy", output=outside)
+    assert result.returncode == 1 and result.stdout == "error: generic_output_directory_invalid\n"
+    assert result.stderr == "" and not outside.exists()

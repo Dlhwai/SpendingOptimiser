@@ -17,7 +17,7 @@ from .local_templates import LocalTemplates, analyze, facts_from
 from .mail_cache import decode_candidate
 from .transactions import Account, EventOrigin, Transaction
 
-REVISION = "local-templates-v8"
+REVISION = "local-templates-v9"
 BATCH_SIZE = 100
 
 

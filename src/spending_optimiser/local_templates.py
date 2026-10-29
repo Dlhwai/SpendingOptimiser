@@ -492,6 +492,8 @@ def analyze(candidate):
     ):
         return Analysis(issues=("unsupported_message_structure",))
     bindings, shapes, parts, issues = [], [], [], []
+    if "ambiguous_subject" in candidate.warnings:
+        issues.append("ambiguous_subject")
     financial = False
     profile_context = any(PROFILE_CLAIM.search(part.text) for part in candidate.parts)
     for part in candidate.parts:
@@ -631,6 +633,8 @@ def analyze(candidate):
                 "account",
                 "bank",
                 "merchant",
+                "card_reference",
+                "transaction_notice",
                 "purchase",
                 "refund",
                 "transfer",

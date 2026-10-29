@@ -175,7 +175,7 @@ def qualify(source, private_directory, generic_output=None):
                     "forwarded_or_multiple_financial_events" in reasons
                 )
                 counts["amount_conflicting"] += (
-                    bool(facts) and facts["amount"].status == "conflicting"
+                    "amount" in facts and facts["amount"].status == "conflicting"
                 )
                 if outcome == "uncertain":
                     for field, counter in (
@@ -184,7 +184,7 @@ def qualify(source, private_directory, generic_output=None):
                         ("occurred_on", "unresolved_event_date"),
                         ("account_id", "unresolved_account"),
                     ):
-                        if facts[field].value is None:
+                        if field not in facts or facts[field].value is None:
                             counts[counter] += 1
             except (ValueError, RecursionError):
                 counts["unreadable"] += 1
