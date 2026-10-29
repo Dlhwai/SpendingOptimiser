@@ -102,6 +102,21 @@ def test_incomplete_changed_or_non_purchase_contracts_never_gain_authority(tmp_p
     assert total(document) == 0 and all(t.review.status != "accepted" for t in heads(document))
 
 
+@pytest.mark.parametrize(
+    "body, kind",
+    [(CARD, "purchase"), (WALLET.replace("03 Feb 09:15", "03 Feb 2025 09:15"), "transfer")],
+)
+def test_completed_profiles_reconcile_all_explicit_currency_evidence(tmp_path, body, kind):
+    service, fake, _ = setup(tmp_path, {"one": body + "\nCurrency: SGD"})
+    assert heads(load(service))[0].review.status == "accepted"
+    for currency in ("USD", "XYZ", "dollars"):
+        fake.bodies["one"] = body + "\nCurrency: " + currency
+        document = load(service, "refresh")
+        transaction = heads(document)[0]
+        assert transaction.review.status == "pending"
+        assert total(document, kind=kind) == 0 and transaction.review.reason
+
+
 def test_known_date_order_requires_corresponding_financial_day_month(tmp_path):
     service, _, _ = setup(tmp_path, {"one": CARD.replace("03 FEB", "04 FEB")})
     transaction = heads(load(service))[0]

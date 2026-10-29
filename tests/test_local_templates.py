@@ -8,7 +8,7 @@ import json
 
 import pytest
 from test_monthly import connected
-from test_processing import BODY, PERIOD, load, setup, total
+from test_processing import BODY, PERIOD, Notifications, load, setup, total
 
 from spending_optimiser.gmail import GmailAdapter
 from spending_optimiser.ledger import heads
@@ -22,6 +22,7 @@ from spending_optimiser.local_templates import (
     validate_generic,
 )
 from spending_optimiser.mail_cache import CANDIDATE
+from spending_optimiser.processing import extract
 
 NARRATIVE = (
     "Dear Fictional Reader,\nYour purchase of USD 19.25 on 3 February 2025 "
@@ -482,6 +483,252 @@ def test_historical_discovery_failures_retry_fairly_and_repaired_provenance_is_r
         )
         assert db.execute("SELECT count(*) FROM mail_processed_current").fetchone()[0] == 0
     assert not service.cache.ledger.load().transactions
+
+
+@pytest.mark.parametrize(
+    "body, currency",
+    [
+        (BODY, "SGD"),
+        (BODY.replace("Amount: SGD 12.34", "Amount (SGD): 12.34"), "SGD"),
+        (BODY.replace("Amount: SGD 12.34", "Amount: 12.34\nCurrency: SGD"), "SGD"),
+        (NARRATIVE, "USD"),
+        (NARRATIVE.replace("Your purchase", "Your refund"), "USD"),
+        (NARRATIVE.replace("Your purchase", "Your transfer"), "USD"),
+        (
+            "Purchase confirmation\n"
+            + NARRATIVE.split("\n")[1]
+            .replace("Your purchase of", "An amount of")
+            .replace(" on ", " was debited on "),
+            "USD",
+        ),
+    ],
+)
+@pytest.mark.parametrize("label", ["Currency", "Transaction currency"])
+def test_every_amount_path_reconciles_explicit_currency(tmp_path, body, currency, label):
+    service, fake, _ = setup(tmp_path, {"one": body + f"\n{label}: {currency}"})
+    original = load(service)
+    assert heads(original)[0].review.status == "accepted"
+    for competing in ("USD" if currency == "SGD" else "SGD", "XYZ", "dollars"):
+        fake.bodies["one"] = body + f"\n{label}: {competing}"
+        document = load(service, "refresh")
+        transaction = heads(document)[0]
+        assert transaction.review.status == "pending"
+        assert total(document, currency=currency, kind=transaction.kind.value) == 0
+        assert document.transactions[0] == original.transactions[0]
+        assert transaction.review.reason
+
+
+def test_mime_currency_signatures_agree_with_extraction(tmp_path):
+    service, fake, _ = setup(tmp_path, {"one": BODY + "\nCurrency: SGD"})
+    with_html(fake, plain=True)
+    assert total(load(service)) == 1234
+    fake.bodies["one"] = BODY + "\nCurrency: USD"
+    document = load(service, "refresh")
+    transaction = heads(document)[0]
+    assert total(document) == 0 and transaction.review.status == "pending"
+    assert "amount_currency_conflicting" in transaction.review.reason
+    assert "conflicting_or_incomplete_representations" in transaction.review.reason
+
+
+@pytest.mark.parametrize("reference", ["1234 5678 9012 3456", "1234-5678-9012-3456"])
+@pytest.mark.parametrize("narrative", [False, True])
+def test_separated_numeric_accounts_require_explicit_institution(tmp_path, reference, narrative):
+    body = (
+        NARRATIVE.replace("travel-wallet", reference)
+        if narrative
+        else BODY.replace("wallet-blue", reference)
+    )
+    service, fake, _ = setup(tmp_path, {"one": body})
+    document = load(service)
+    assert heads(document)[0].account_id.value is None
+    assert heads(document)[0].review.status == "pending"
+    assert not document.accounts
+    fake.bodies["one"] = body + "\nInstitution: Fictional Bank"
+    document = load(service, "refresh")
+    transaction = heads(document)[0]
+    assert transaction.review.status == "accepted"
+    assert len(transaction.account_id.evidence) == 2
+    assert transaction.card_id.value is None and document.accounts[0].kind == "other"
+    assert total(document, currency="USD" if narrative else "SGD") == (1925 if narrative else 1234)
+
+
+@pytest.mark.parametrize("kind", ["purchase", "refund", "transfer", "debit"])
+def test_complete_narrative_references_keep_distinct_processing_identities(tmp_path, kind):
+    body = NARRATIVE.replace("Your purchase", "Your " + kind)
+    if kind == "debit":
+        body = "Purchase confirmation\n" + body.replace("Your debit of", "An amount of").replace(
+            " on ", " was debited on "
+        )
+    service, _, _ = setup(
+        tmp_path,
+        {
+            "one": body.replace("travel-wallet", "travel.wallet"),
+            "two": body.replace("travel-wallet", "travel.savings"),
+        },
+    )
+    document = load(service)
+    transactions = heads(document)
+    assert len(transactions) == len(document.accounts) == 2
+    assert len({t.account_id.value for t in transactions}) == 2
+    assert all(t.review.status == "accepted" for t in transactions)
+    assert {a.label for a in document.accounts} == {"travel.wallet", "travel.savings"}
+    assert total(document, currency="USD", kind="purchase" if kind == "debit" else kind) == 3850
+    for transaction in transactions:
+        ref = transaction.account_id.evidence[0]
+        assert "travel.wallet" in ref.quote or "travel.savings" in ref.quote
+    assert load(service, "refresh") == document
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "travel.wallet/extra",
+        "travel.wallet@extra",
+        "travel.wallet+extra",
+        "travel.walleté",
+        "a" * 65,
+        "travel.wallet.",
+    ],
+)
+def test_continuing_or_incomplete_narrative_reference_cannot_bind_a_prefix(tmp_path, reference):
+    service, _, _ = setup(tmp_path, {"one": NARRATIVE.replace("travel-wallet", reference)})
+    document = load(service)
+    transaction = heads(document)[0]
+    assert transaction.review.status == "pending" and transaction.account_id.value is None
+    assert not document.accounts and total(document, currency="USD") == 0
+
+
+INVALID_LABELLED_VALUES = [
+    *[
+        (label, "Purchase!")
+        for label in ("Type", "Transaction type", "Type of transaction", "Event type")
+    ],
+    *[
+        (label, "SGD -99.00")
+        for label in (
+            "Amount",
+            "Transaction amount",
+            "Purchase amount",
+            "Transfer amount",
+            "Amount debited",
+            "Amount credited",
+        )
+    ],
+    ("Amount", "-99.00"),
+    ("Transaction amount", "12.34oops"),
+    ("Amount (SGD)", "-99.00"),
+    ("Transaction amount (SGD)", "12.34oops"),
+    ("Amount (dollars)", "99.00"),
+    *[
+        (label, "04/02/25")
+        for label in (
+            "Event date",
+            "Transaction date",
+            "Purchase date",
+            "Transfer date",
+            "Date of transaction",
+            "Transaction date & Time",
+            "Posting date",
+            "Posted on",
+        )
+    ],
+    *[
+        (label, "a" * 129)
+        for label in ("Account", "Account ID", "Account reference", "Account number", "Account No.")
+    ],
+    ("Bank", "b" * 65),
+    ("Institution", "b" * 65),
+    *[(label, "m" * 129) for label in ("Merchant", "Merchant name", "Transaction description")],
+    ("Currency", "dollars"),
+    ("Transaction currency", "dollars"),
+    *[(label, "c" * 129) for label in ("Card", "Card number", "Card No.", "Card/Acct No.")],
+]
+
+
+@pytest.mark.parametrize("label, value", INVALID_LABELLED_VALUES)
+@pytest.mark.parametrize(
+    "separator, empty",
+    [(": ", False), (":\n", False), ("\t", False), (": ", True), (":\n", True)],
+)
+def test_recognized_labels_cannot_hide_invalid_or_empty_competing_values(
+    label, value, separator, empty
+):
+    fake = Notifications({"one": BODY})
+    adapter = GmailAdapter(fake, "synthetic-label-review")
+    control = adapter.get_candidate("one").candidate
+    assert extract(control, "control", control.observation)[2] == "accepted"
+    fake.bodies["one"] = BODY + "\n" + label + separator + ("" if empty else value)
+    saved = adapter.get_candidate("one").candidate
+    facts, _, outcome, reasons = extract(saved, "competing-value", saved.observation)
+    assert outcome == "uncertain" and "invalid_explicit_field" in reasons
+    assert facts["amount"].value.minor_units == 1234
+
+
+@pytest.mark.parametrize("bad_field", ["Amount: SGD -99.00", "Event date: 04/02/25"])
+@pytest.mark.parametrize("html", [False, True])
+def test_invalid_competing_fields_are_saved_inline_and_excluded(tmp_path, bad_field, html):
+    from html import escape
+
+    body = BODY + "\n" + bad_field
+    if html:
+        body = "".join(f"<p>{escape(line)}</p>" for line in body.splitlines())
+    service, fake, client = setup(tmp_path, {"one": body})
+    if html:
+        original = fake.get_message
+
+        def html_message(identity):
+            message = original(identity)
+            message["payload"]["mimeType"] = "text/html"
+            return message
+
+        fake.get_message = html_message
+    document = load(service)
+    transaction = heads(document)[0]
+    assert total(document) == 0 and transaction.review.status == "pending"
+    assert "invalid_explicit_field" in transaction.review.reason
+    assert "Excluded from totals" in client.get("/saved?month=2025-02").text
+    saved = candidate(service, fake)
+    assert bad_field in saved.parts[0].text
+    for fact in (transaction.amount, transaction.occurred_on, transaction.account_id):
+        for ref in fact.evidence:
+            start, end = map(int, ref.locator.rsplit(":", 2)[1:])
+            assert saved.parts[0].text[start:end] == ref.quote
+
+
+def test_parser_upgrade_requalifies_unchanged_saved_machine_acceptance(tmp_path, monkeypatch):
+    from spending_optimiser import local_templates
+
+    current_analyze = local_templates.analyze
+
+    def legacy_analyze(saved):
+        analysis = current_analyze(saved)
+        analysis.issues = tuple(i for i in analysis.issues if i != "amount_currency_conflicting")
+        return analysis
+
+    service, _, _ = setup(tmp_path, {"one": BODY + "\nCurrency: USD"})
+    with monkeypatch.context() as legacy:
+        legacy.setattr(local_templates, "analyze", legacy_analyze)
+        legacy.setattr(local_templates, "LEARNING_REVISION", "local-learning-v2")
+        legacy.setattr("spending_optimiser.processing.REVISION", "local-templates-v3")
+        original = load(service)
+    assert total(original) == 1234 and heads(original)[0].review.status == "accepted"
+    document = load(service)
+    assert total(document) == 0 and heads(document)[0].review.status == "pending"
+    assert len(document.transactions) == 2
+    assert document.transactions[0] == original.transactions[0]
+    assert load(service) == document
+    with service.cache.ledger.connection() as db:
+        revisions = {row[0] for row in db.execute("SELECT revision FROM mail_template_sources")}
+    assert revisions == {"local-learning-v2", local_templates.LEARNING_REVISION}
+
+
+def test_financial_labels_do_not_reinterpret_transport_dates_or_merchant_text(tmp_path):
+    body = BODY.replace("Fictional Cafe", "Currency: dollars; Type: Purchase!") + (
+        "\nDate: 04/02/25\nGenerated: 04/02/25\nNarrative says Event date: tomorrow"
+    )
+    service, _, _ = setup(tmp_path, {"one": body})
+    document = load(service)
+    assert total(document) == 1234 and heads(document)[0].review.status == "accepted"
 
 
 def test_generated_private_template_data_never_enters_public_schema_exports(tmp_path):

@@ -20,7 +20,7 @@ from .extraction import ACCOUNT_REFERENCE, EVENT_KINDS, MAX_NOTIFICATION_CHARS, 
 from .notification_profiles import PROFILE_ROLES, PROFILE_RULES, qualify
 
 VERSION = "local-structural-v1"
-LEARNING_REVISION = "local-learning-v2"
+LEARNING_REVISION = "local-learning-v3"
 DISCOVERY_REVISION = "template-discovery-" + LEARNING_REVISION
 MAX_PARTS = 8
 MAX_TOTAL_CHARS = 65536
@@ -189,7 +189,9 @@ RAW_RULES = (
         "account_for",
         "account",
         re.compile(
-            r"(?i)\b(?:from|for|using)\s+(?:your\s+)?account\s+reference\s+(?P<value>[A-Za-z0-9][A-Za-z0-9_-]{0,63})(?![A-Za-z0-9_-])"
+            r"(?i)\b(?:from|for|using)\s+(?:your\s+)?account\s+reference\s+"
+            rf"(?P<value>{ACCOUNT_REFERENCE.pattern}?)(?<![. ])"
+            r"(?=[.,;!?](?:\s|$)|[^\S\n]*(?:\n|$))"
         ),
     ),
 )
@@ -229,6 +231,19 @@ def _label_whitespace(pattern):
         text = text.replace(label, label.replace(" ", r"\s+"))
     return re.compile(text, pattern.flags)
 
+
+FIELD_LABEL = _label_whitespace(
+    re.compile(
+        r"(?im)^[^\S\n]*(?P<label>Type|Transaction type|Type of transaction|Event type|"
+        r"(?:Amount|Transaction amount)(?:\s*\([^\n\t)]*\))?|Purchase amount|Transfer amount|"
+        r"Amount debited|Amount credited|"
+        r"(?:Event date|Transaction date|Purchase date|Transfer date|Date of transaction)"
+        r"(?:\s*(?:[/&]|and)\s*Time)?|Posting date|Posted on|"
+        r"Account|Account ID|Account reference|Account number|Account No\.?|Bank|Institution|"
+        r"Merchant|Merchant name|Transaction description|Currency|Transaction currency|"
+        r"Card(?: number| No\.?)?|Card/Acct No\.?)\s*[:\t]"
+    )
+)
 
 RULES = (
     tuple((grammar, role, _label_whitespace(pattern)) for grammar, role, pattern in RAW_RULES)
@@ -501,6 +516,9 @@ def analyze(candidate):
                         part.locator,
                     )
                 )
+        label_starts = {b.start for b in found if b.grammar.endswith("_label")}
+        if any(m.start("label") not in label_starts for m in FIELD_LABEL.finditer(text)):
+            issues.append("invalid_explicit_field")
         found, profile_issues = qualify(found, text, candidate.subject, candidate.observation)
         issues.extend(profile_issues)
         found.sort(key=lambda b: (b.start, b.end, b.grammar))
@@ -548,6 +566,12 @@ def analyze(candidate):
         ):
             issues.append("non_financial_or_conflicting_notice")
         bindings.extend(found)
+    currencies = {b.value for b in bindings if b.role == "currency"}
+    currencies.update(
+        b.value.currency for b in bindings if b.role in {"amount", "purchase", "refund", "transfer"}
+    )
+    if len(currencies) > 1:
+        issues.append("amount_currency_conflicting")
     financial_parts = {}
     for binding in bindings:
         financial_parts.setdefault(binding.locator, []).append(binding)
@@ -560,7 +584,7 @@ def analyze(candidate):
         ):
             continue
         signature = []
-        for role in ("kind", "amount", "occurred_on", "account"):
+        for role in ("kind", "amount", "currency", "occurred_on", "account"):
             values = []
             for b in selected:
                 if b.role == role:
@@ -581,6 +605,12 @@ def analyze(candidate):
                         )
                     except ValueError:
                         pass
+            if role == "currency":
+                values.extend(
+                    b.value.currency
+                    for b in selected
+                    if b.role in {"amount", "purchase", "refund", "transfer"}
+                )
             signature.append(tuple(sorted(set(values))))
         representations.append((part.mime_type, tuple(signature)))
     if len(representations) > 1:
@@ -760,8 +790,11 @@ def facts_from(analysis, digest, observation):
         issues.append("account_attribution_unresolved")
     if reference.value is not None:
         value = reference.value
-        symbolic = ACCOUNT_REFERENCE.fullmatch(value) is not None and not re.search(
-            r"[0-9]{8}", value
+        numeric = re.fullmatch(r"[0-9][0-9 -]*", value) is not None
+        symbolic = (
+            not numeric
+            and ACCOUNT_REFERENCE.fullmatch(value) is not None
+            and not re.search(r"[0-9]{8}", value)
         )
         masked = bool(
             re.search(r"(?i)(?:[*x•]{2,}|ending|last\s*[0-9]|\b(?:card|credit|debit)\b)", value)
@@ -769,7 +802,7 @@ def facts_from(analysis, digest, observation):
         complete = (
             bool(re.fullmatch(r"[0-9][0-9 -]{7,33}", value)) and facts["bank"].value is not None
         )
-        if masked or not (symbolic or complete) or value.isdigit() and not complete:
+        if masked or not (symbolic or complete):
             facts["account"] = Fact(
                 evidence=reference.evidence,
                 note="Masked/card identifiers do not establish complete account attribution",
