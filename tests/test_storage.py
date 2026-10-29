@@ -310,8 +310,13 @@ def test_unrelated_cold_corruption_does_not_block_hot_month(tmp_path):
     assert set(service.saved_range(hot)[0]) == {"hot"}
     assert storage.mail_archived(service.namespace, hot) == 0
     assert storage.restore_mail(service.namespace, hot) == 0
+    damaged = versions(service)
+    assert service.saved_range(FEB)[0] == {"old": None}
+    assert storage.mail_archived(service.namespace, FEB) == 0
+    digest = next(digest for _, identity, digest, _ in damaged if identity == "old")
     with pytest.raises(ArchiveError):
-        service.saved_range(FEB)
+        service.cache.version(service.namespace, "old", digest)
+    assert versions(service) == damaged
 
 
 def test_archive_checksum_and_expansion_limit(monkeypatch):

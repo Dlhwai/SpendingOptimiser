@@ -257,12 +257,12 @@ def test_oauth_real_library_flow_load_refresh_and_ledger_preserved(setup):
     response = load(env)
     assert "2 saved candidates" in response.text and "2 duplicate IDs skipped" in response.text
     inbox = env.client.get("/saved?month=2025-02").text
-    assert "Not in ledger" in inbox
+    assert "Unsupported" in inbox and "Excluded from totals" in inbox
     assert "&lt;script&gt;" in inbox and "<script>" not in inbox
     assert "<img src=x>" not in inbox
     identities = [c.observation.observation_id for c in saved(env.service).values()]
     response = load(env)
-    assert "2 saved candidates" in response.text and "Query exhausted" in response.text
+    assert "2 saved candidates" in response.text and "Gmail search ended" in response.text
     assert identities == [c.observation.observation_id for c in saved(env.service).values()]
     env.service.connection.credentials.expiry = datetime.now(UTC).replace(tzinfo=None) - timedelta(
         days=1
@@ -460,7 +460,7 @@ def test_zero_partial_errors_limits_cycles_and_safe_html(setup):
     assert "Untrusted mail" in inbox and "tracking.invalid" not in inbox
     assert "execute()" not in inbox
     env.google.pages = {None: {"messages": [{"id": "mail1"}], "nextPageToken": "more"}}
-    assert "Incomplete period" in load(env, pages="1").text
+    assert "More mail to load" in load(env, pages="1").text
     env.google.pages = {
         None: {"nextPageToken": "a"},
         "a": {"nextPageToken": "b"},
@@ -475,7 +475,7 @@ def test_zero_partial_errors_limits_cycles_and_safe_html(setup):
         "d": {"nextPageToken": "e"},
     }
     before = len(env.google.calls)
-    assert "Incomplete period" in load(env, pages="5").text
+    assert "More mail to load" in load(env, pages="5").text
     assert len(env.google.calls) - before == 5
     for code in ("rate_limited", "permission_denied", "transport_failed", "api_error"):
         env.google.error = code

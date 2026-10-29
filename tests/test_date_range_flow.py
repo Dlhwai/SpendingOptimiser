@@ -120,7 +120,7 @@ def test_coverage_belongs_to_the_exact_period_that_was_loaded(tmp_path):
     assert "Not loaded" in client.get("/gmail?start=2025-02-01&end=2025-02-10").text
     saved = client.get("/saved?start=2025-02-01&end=2025-02-10").text
     assert "Period incomplete or not loaded" in saved and "Saved candidates: 1" in saved
-    assert "Query exhausted" in client.get("/gmail?month=2025-02").text
+    assert "Gmail search ended" in client.get("/gmail?month=2025-02").text
     around = client.get("/?start=2025-01-15&end=2025-03-14").text
     assert "Gmail retrieval for this period is incomplete or not started" in around
     # Two exhausted neighbouring months still do not make a range across them loaded.
@@ -176,7 +176,7 @@ def test_a_period_and_its_equal_calendar_month_share_one_stored_scan(tmp_path):
     client = web(path, service)
     for query in ("month=2025-02", "start=2025-02-01&end=2025-02-28"):
         page = client.get(f"/gmail?{query}").text
-        assert "Query exhausted" in page and "February 2025" in page
+        assert "Gmail search ended" in page and "February 2025" in page
     fields = {"connection_id": service.connection_id, "pages": "1", "action": "continue"}
     response = post(client, "/gmail/month", start="2025-02-01", end="2025-02-28", **fields)
     assert response.status_code == 303 and response.headers["location"] == "/gmail?month=2025-02"
@@ -256,7 +256,7 @@ def test_a_valid_range_posts_loads_and_redirects_to_the_same_range(tmp_path):
     }
     assert fake.calls[0][1]["query"] == period.query
     page = client.get(response.headers["location"]).text
-    assert "20 Feb - 5 Mar 2025" in page and "Query exhausted" in page
+    assert "20 Feb - 5 Mar 2025" in page and "Gmail search ended" in page
     form = Fields(page).find("form", action="/gmail/month")
     assert form
     hidden = {a["name"]: a["value"] for a in Fields(page).find("input", type="hidden")}

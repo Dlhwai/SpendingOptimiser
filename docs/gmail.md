@@ -267,6 +267,7 @@ The sidebar has three steps: **1 Connect Gmail**, **2 Inspect saved data** and
    unresolved ID so later pages still load; **Retry failed messages** re-fetches only
    those IDs. Listing, network, rate-limit and auth failures never advance. Errors,
    cycles and unresolved messages stay incomplete, never empty or complete success.
+   **Gmail search ended** means no further search results, not complete financial coverage.
    **Refresh period** restarts an expired/cycled token. No automatic retries,
    whole-mailbox scans, scheduler or background polling exist.
    Progress is stored per Google account and exact period. A scan covers only the
@@ -277,10 +278,11 @@ The sidebar has three steps: **1 Connect Gmail**, **2 Inspect saved data** and
    receipt time. Expand a row to view the complete subject, unverified headers and
    escaped normalized text. HTML is never executed, images never loaded, URLs never
    followed and embedded instructions never acted upon. Display is capped at 10,000
-   characters per candidate with a size notice. Accepted format layouts match saved
-   candidates locally and deterministically into unsaved, review-pending proposals.
-   No model is called, nothing is added to the ledger and review decisions and
-   financial facts remain unchanged.
+   characters per candidate with a size notice. For source-processing outcomes and
+   bounded local continuation after a load, see
+   [automatic transactions](automatic-transactions.md#ordinary-trigger-and-continuation).
+   Optional accepted AI layouts remain
+   [unsaved diagnostic proposals](subscription-ai.md#what-is-supported).
 6. **Refresh period** restarts this period's query with bounded pages, retaining
    saved candidates and deduplicating by stable account/message identity. Changed
    content versions are preserved. Continue until exhausted again; previous
@@ -288,7 +290,7 @@ The sidebar has three steps: **1 Connect Gmail**, **2 Inspect saved data** and
    is not erased from saved data. This is not a snapshot or financial completeness
    guarantee. The last query-action time, completed-page/duplicate counts and
    unresolved messages are visible. Retries do not inflate these counts.
-7. **Disconnect Gmail** hides saved mail, cancels pending sign-ins and removes this
+7. **Disconnect Gmail** hides saved mail and Gmail-derived ledger/source views, cancels pending sign-ins and removes this
    ledger's saved authorization from `.env`. It is idempotent. If `.env` cannot be
    updated, the UI is disconnected but reports the failure and the saved credential
    could remain; fix the file and retry. The client settings stay for later
@@ -315,14 +317,12 @@ encryption**, scoped by stable Google identity, including headers, message text,
 every retained content version, failed-message IDs and successful-ID/page-token
 continuation. Existing ledger records stay intact. Local database format 2 supports
 verified compressed payloads, not encryption; JSON schema stays 1.0. Protect
-disk/backups. [Storage](storage.md) keeps the current Singapore month plus the two
-before it uncompressed, whichever period you view, and compresses eligible older
-detail automatically after each write once usage is above 1 decimal GB. It can
-restore a selected account and period locally. Saved mail is
+disk/backups. See [Storage](storage.md) for the automatic compression trigger,
+retention window and local restoration of a selected account and period. Saved mail is
 retained indefinitely; there is no purge or deletion action. Disconnect does not
 remove the local cache or ledger history, only visible access and authorization.
 
-Restart hides mail and clears browser sessions, without reading `.env` or the
+Restart hides mail and Gmail-derived ledger records and clears browser sessions, without reading `.env` or the
 network. Use **Restore saved connection** to read the saved authorization and view
 only that identity's saved mail (no network/mail retrieval yet). Loading then
 refreshes/verifies authorization. Revoked or expired refresh/API authentication
@@ -360,8 +360,11 @@ wrong hostname, an unknown authority, a redirect and an oversized response are
 refused. `tests/test_provider_script.py`
 runs the real sign-in script (needs Node) against a recording browser stand-in. The
 synthetic Chrome walkthrough uses a mock consent page and fake transport, not real
-Google sign-in. Reproduce it with
+Google sign-in. Reproduce that walkthrough with
 `uv run --locked python examples/ui_preview.py --port 8876`; see the README.
+`tests/test_processing.py` covers the durable automatic path and its failure/history/account
+boundaries; use the separate [automatic-processing preview](automatic-transactions.md#synthetic-proof)
+to start from an empty ledger.
 
 **Still requires the user:** perform the Cloud/client setup above, put the client in
 `.env`, complete explicit Google consent from the app's Connect action, and verify

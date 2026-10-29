@@ -19,7 +19,7 @@
 </nav>
 </aside>
 <div class="workspace">
-{% if request.app.state.synthetic_preview|default(false) %}<div class="preview-banner">SYNTHETIC PREVIEW - Fictional account, mail and imported example. No Google/model requests or native credential access.</div>{% endif %}
+{% if request.app.state.synthetic_preview|default(false) %}<div class="preview-banner">SYNTHETIC PREVIEW - Fictional account and data. No Google/model requests or native credential access.</div>{% endif %}
 <main id="main" tabindex="-1">{% if maintenance_warning %}<div class="warning" role="status">{{ maintenance_warning }} <a href="/storage">Storage</a></div>{% endif %}{% block content %}{% endblock %}</main>
 </div>
 </div>

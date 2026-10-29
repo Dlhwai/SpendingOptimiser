@@ -4,7 +4,8 @@ Step 3, **Understand this month**, summarises **saved ledger facts** for a perio
 choose: a single day, a calendar month or any run of days up to three calendar months.
 It is not a Gmail parser, a bank statement or an AI dashboard. Every page view reads
 local data only, never calls Gmail or a model, and never changes saved data. There is
-no chatbot, automatic acceptance or background sync. The optional
+no chatbot or background sync. Explicit load actions create supported automatic
+transactions; merely viewing this overview never processes mail. The optional
 [safe-reference AI workflow](subscription-ai.md) is a separate tab.
 
 ## Choosing a period
@@ -71,7 +72,7 @@ Both ends may fall in differently named months or years, such as 30 Dec 2024 to
 3. Choose a period and **View**. This reads SQLite only. **Load period** downloads up
    to the chosen 1-5 pages of 20 message IDs (default 2). Duplicate IDs count toward
    that bound.
-4. **Continue period** until **Query exhausted**. **Retry failed messages** re-fetches
+4. **Continue period** until **Gmail search ended**. **Retry failed messages** re-fetches
    only messages that were proven undecodable (`invalid_message`) or too large
    (`response_too_large`), up to 20 per selected page. **Refresh period** restarts the
    query while keeping and deduplicating saved mail.
@@ -90,7 +91,7 @@ Rules that apply to every period:
   whole month does not mark one day inside it, or a range across it, as loaded, and
   two loaded neighbouring months do not make a range across them loaded. Mail already
   saved for any period is still listed wherever it falls, but an unscanned period says
-  **Not loaded** or **Incomplete period** until it is exhausted itself.
+  **Not loaded** or **More mail to load** until it is exhausted itself.
 - Successful candidates survive failures. A failed listing, network, rate-limit or
   authentication error never advances the page, so Continue retries it. Unsuccessful
   retries move to the end of the persisted order, so repeated bounded retries reach
@@ -127,18 +128,17 @@ Rules that apply to every period:
 - The bar chart, the daily timeline, the totals, the transactions table and the
   **Transactions** list use the same records. Each chart has an exact-data table.
   The daily chart omits days without purchases. An empty period shows **0 results**.
-- The ledger is an independent local workspace of everything imported. It is not
-  mapped to the connected Gmail account; switching account changes only the saved
-  mail you see.
+- Gmail-derived events and their history/source views are scoped to the connected
+  Google namespace and hidden on disconnect/account switch. Non-Gmail imported
+  events remain an independent local workspace.
 
 ## Extraction and privacy boundary
 
-The constrained model-based [extraction](extraction.md) is fixture-tested and is not
-wired to Gmail. Accepted format layouts match saved mail locally into unsaved,
-review-pending proposals on **Saved mail**. Loading and page views make no model calls
-and change no ledger facts. Reviewed transactions and charts come from the offline
-schema import and review workflow. The [AI workflow](subscription-ai.md) handles
-official public terms and placeholder structures only, never private mail.
+See [automatic transactions](automatic-transactions.md) for mail-to-ledger acceptance,
+uncertainty, discovery limits and saved-mail continuation. The standalone
+[model-span use case](extraction.md) and [safe-layout diagnostic proposals](subscription-ai.md#what-is-supported)
+remain separate paths; see the [AI privacy boundary](subscription-ai.md#privacy-and-enforcement)
+for eligible model inputs. Page views never process mail or change ledger facts.
 
 ## Saved mail and storage
 

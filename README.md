@@ -6,10 +6,11 @@ your computer at `http://127.0.0.1:8765`, and nothing leaves it unless you expli
 ask for a Gmail load or an AI analysis.
 
 **Status: early.** The offline ledger, saved Gmail candidates and period views are
-implemented and tested with synthetic data. Live Gmail has not been verified,
+implemented, including supported deterministic mail-to-ledger processing, and tested
+with synthetic data. Live Gmail has not been verified,
 including a certificate-trust fix for a Google sign-in failure reported on the
-installed app (see [Gmail limits](docs/gmail.md)). Rewards, qualified bank-email
-parsing and card-term research are not built.
+installed app (see [Gmail limits](docs/gmail.md)). Rewards and bank-statement reconciliation are not built. Local template learning
+remains bounded by explicit supported financial semantics.
 
 ## What it does
 
@@ -19,8 +20,10 @@ or analysis button.
 1. **Connect Gmail**: sign in with Google in a window the app opens (read-only access),
    then explicitly **Load**, **Continue**, **Retry** or **Refresh** mail for a period.
    Nothing loads at sign-in or startup. Progress is saved per account and period.
-2. **Inspect saved data**: saved mail, transactions, the review queue, card evidence,
-   data import and storage, as tabs.
+2. **Inspect saved data**: saved mail with inline processing outcomes, canonical
+   transactions and card evidence. Supported unambiguous notifications are accepted
+   automatically after loading; uncertain/unsupported mail stays flagged and excluded.
+   Corrections/rejections remain at transaction detail. No routine import/review/storage tabs.
 3. **Understand this month**: the canonical transactions for a period with purchase
    charts by card, account and avenue and by day. Currencies and event kinds are never
    mixed or netted. An optional **Safe AI analysis** tab handles public card terms only.
@@ -29,9 +32,9 @@ or analysis button.
 This month, Last month and Last 3 months. A period is one day up to three calendar
 months, and the server enforces that limit. See [periods and charts](docs/monthly.md).
 
-**Storage.** Once usage is above 1,000,000,000 bytes the app compresses older detail
-by itself after each write. Nothing is deleted and nothing needs to be run. See
-[storage](docs/storage.md).
+**Storage.** The app automatically compresses eligible older detail after supported
+writes. Nothing is deleted and nothing needs to be run. See
+[storage](docs/storage.md) for the trigger, retention window and recovery.
 
 ## Set up and run
 
@@ -46,8 +49,10 @@ Open **http://127.0.0.1:8765**. The database defaults to
 `~/.local/share/spending-optimiser/ledger.sqlite3`; override it with
 `--database /absolute/private/path/ledger.sqlite3` or `SPENDING_OPTIMISER_DB`.
 
-**Try it offline** (no credentials, model or Internet after install): open step 2, choose
-**Import data**, import the bundled synthetic example, then open **Review queue**.
+**Try automatic processing offline** (no credentials, model or Internet after install):
+run `uv run --locked python examples/automatic_preview.py --port 8897`, then Load
+February 2025. This starts with an empty ledger, not imported transactions.
+Optional snapshot import/recovery remains in Saved mail's **Recovery & developer tools** disclosure.
 
 **Use Gmail** by following [Gmail setup and use](docs/gmail.md): create a Desktop OAuth
 client, put its ID and secret in the gitignored `.env` (see `.env.example`), then
@@ -59,7 +64,8 @@ choose **Connect Gmail**.
 | --- | --- |
 | [Periods and charts](docs/monthly.md) | Date ranges and the exact three-month limit, loading mail, what the overview includes |
 | [Gmail](docs/gmail.md) | Google Cloud setup, sign-in, the read-only adapter, privacy, live-verification status |
-| [Local ledger](docs/local-ledger.md) | Import and review walkthrough, Card evidence explained, persistence guarantees |
+| [Automatic transactions](docs/automatic-transactions.md) | Supported format, acceptance/uncertainty, bounded saved-mail continuation, source history |
+| [Local ledger](docs/local-ledger.md) | Optional recovery/import walkthrough, corrections, Card evidence, persistence guarantees |
 | [Storage](docs/storage.md) | Automatic compression, restoring older mail, recovery |
 | [Safe AI analysis](docs/subscription-ai.md) | Optional ChatGPT connection for public terms |
 | [Schemas](docs/schemas.md), [extraction](docs/extraction.md) | Data model and the fixture-tested extraction use case |
@@ -71,6 +77,7 @@ Each preview runs the real app against a disposable database and fake Google and
 services. Use an unused loopback port, never 8765. Ctrl-C deletes its data.
 
 ```sh
+uv run --locked python examples/automatic_preview.py --port 8897 # mail-to-ledger, empty ledger
 uv run --locked python examples/monthly_preview.py --port 8877   # periods and charts
 uv run --locked python examples/ui_preview.py --port 8876        # first-run sign-in walkthrough
 uv run --locked python examples/storage_preview.py --port 8898   # compression and restore
@@ -87,16 +94,22 @@ uv run --locked python examples/gmail_synthetic.py               # adapter only,
 - Private mail and transactions are never sent to a model. Only app-captured official
   public terms and allowlisted placeholder structures can be analysed, on an explicit
   per-analysis action.
-- Commit only code, documentation and sanitized fixtures. Keep real emails, account
+- Commit only code, documentation, synthetic/public fixtures and validated generic
+  template assets. Keep real emails, private intermediate templates, account
   details, credentials, databases and session state out of Git.
 
 ## Current limits
 
-- No rewards engine, budgets, bank-statement reconciliation or automatic acceptance of
-  mail-derived transactions. Ledger events come from schema-document import, and you
-  review and correct them by hand.
-- Gmail candidates are raw saved messages, not transactions. Real bank-email formats
-  are unqualified. Exhausting a query is not proof of complete financial coverage.
+- No rewards engine, budgets or bank-statement reconciliation. Saved local emails now
+  teach reusable templates, including supported narrative/HTML forms, but structure
+  alone never proves financial semantics or account identity. Unresolved formats and
+  missing facts remain excluded. See [supported limits](docs/automatic-transactions.md).
+- Processing is bounded per explicit load action. See
+  [discovery limits and saved-mail continuation](docs/automatic-transactions.md#ordinary-trigger-and-continuation).
+- Private templates/evidence stay local. Only closed-schema, value-free generic forms
+  may be reusable Git assets; private literals, source links and fingerprints are excluded.
+- Unsupported/uncertain mail stays inspectable and excluded. Machine acceptance does
+  not verify bank truth. Gmail search ending does not establish complete financial coverage.
 - Live Google sign-in and live AI accounts are unverified.
 - Card evidence is reference data from imported schema documents, not a researched or
   activated rule catalog.

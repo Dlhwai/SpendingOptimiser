@@ -151,18 +151,13 @@ class Storage:
                     )
             if self._has_mail(db):
                 # Imported lazily to avoid a ledger/cache/storage import cycle.
-                from .mail_cache import CANDIDATE
+                from .mail_cache import decode_candidate
 
                 for namespace, identity, digest, payload in db.execute(
                     "SELECT namespace, message_id, digest, payload FROM mail_versions"
                 ):
                     try:
-                        candidate = CANDIDATE.validate_json(unpack(payload))
-                        if (
-                            candidate.observation.source_namespace != namespace
-                            or candidate.observation.source_record_id != identity
-                        ):
-                            raise ValueError("Mail identity mismatch")
+                        candidate = decode_candidate(namespace, identity, payload)
                         receipt = candidate.gmail_internal_at
                         if (
                             receipt is None
@@ -251,29 +246,29 @@ class Storage:
         """Count only this identity's selected period, including earlier versions."""
         if namespace is None:
             return 0
-        from .mail_cache import CANDIDATE
+        from .mail_cache import decode_candidate
 
         count = 0
         marks = ", ".join("?" * len(period.months))
         with self.ledger.connection() as db:
-            for (payload,) in db.execute(
-                "SELECT payload FROM mail_versions WHERE namespace=? AND typeof(payload)='blob' "
+            for identity, payload in db.execute(
+                "SELECT message_id, payload FROM mail_versions "
+                "WHERE namespace=? AND typeof(payload)='blob' "
                 f"AND (receipt_month IN ({marks}) OR receipt_month IS NULL)",
                 (namespace, *period.months),
             ):
-                candidate = CANDIDATE.validate_json(unpack(payload))
-                count += (
-                    period.contains(candidate.gmail_internal_at)
-                    if candidate.gmail_internal_at
-                    else 0
-                )
+                try:
+                    candidate = decode_candidate(namespace, identity, payload)
+                except (ValueError, RecursionError):
+                    continue
+                count += period.contains(candidate.gmail_internal_at)
         return count
 
     def restore_mail(self, namespace, period):
         """Persist all versions of a selected account/period as ordinary text, atomically."""
         if namespace is None:
             raise ValueError("Connect the saved mail account before restoring its detail")
-        from .mail_cache import CANDIDATE
+        from .mail_cache import decode_candidate
 
         restored = 0
         marks = ", ".join("?" * len(period.months))
@@ -286,8 +281,8 @@ class Storage:
                 (namespace, *period.months),
             ):
                 text = unpack(payload)  # any corrupt input rolls back every restoration
-                candidate = CANDIDATE.validate_json(text)
-                if candidate.gmail_internal_at and period.contains(candidate.gmail_internal_at):
+                candidate = decode_candidate(namespace, identity, text)
+                if period.contains(candidate.gmail_internal_at):
                     db.execute(
                         "UPDATE mail_versions SET payload=? "
                         "WHERE namespace=? AND message_id=? AND digest=?",

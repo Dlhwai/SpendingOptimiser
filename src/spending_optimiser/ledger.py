@@ -141,6 +141,41 @@ class Ledger:
         self.maintenance_warning = result.get("warning")
         return result
 
+    def write(self, build, *, origin: str = "mail") -> int:
+        """Persist what `build(db, document, human)` returns, in one write transaction.
+
+        `human` protects events with manual or imported revisions. `build` may use
+        `db` for its own bookkeeping, which then commits or rolls back with the records.
+        The caller owns post-batch storage maintenance.
+        """
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            document = self._load(db)
+            human = {
+                json.loads(payload)["event_id"]
+                for (payload,) in db.execute(
+                    "SELECT payload FROM private_records "
+                    "WHERE collection = 'transactions' AND origin <> 'mail'"
+                )
+            }
+            additions = build(db, document, human)
+            if additions:
+                merged = document.model_dump(mode="json")
+                records = [(name, record.model_dump(mode="json")) for name, record in additions]
+                for name, record in records:
+                    merged[name].append(record)
+                try:
+                    SchemaDocument.model_validate(merged)
+                except (ValidationError, RecursionError) as exc:
+                    raise Conflict("Records conflict with persisted identities or history") from exc
+                for name, record in records:
+                    table = "public_records" if name in PUBLIC else "private_records"
+                    db.execute(
+                        f"INSERT INTO {table} VALUES (?, ?, ?, ?)",
+                        (name, record[COLLECTIONS[name]], canonical(record), origin),
+                    )
+        return len(additions)
+
     def import_snapshot(self, digest: str) -> str:
         """Read the exact canonical import receipt, whether hot or compressed."""
         from .storage import unpack

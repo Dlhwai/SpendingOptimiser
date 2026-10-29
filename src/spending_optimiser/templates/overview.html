@@ -1,14 +1,15 @@
 {% extends 'base.html' %}
-{% from 'components.html' import import_notice, overview_tabs, period_picker %}
+{% from 'components.html' import import_notice, overview_tabs, period_picker, unreadable_notice %}
 {% set step = 3 %}
 {% block title %}Understand this month{% endblock %}
 {% block content %}
 <div class="page-head"><div><p class="eyebrow">Step 3 of 3</p><h1>{{ period.label }}</h1></div>{{ period_picker('/', period, 'overview') }}</div>
 {{ overview_tabs('overview', period) }}
 {{ import_notice(added, unchanged) }}
-{% if gmail.connection %}<div class="card account-card"><div><p class="eyebrow">Gmail</p><strong>{{ gmail.connection.email }}</strong><p class="muted small" style="margin:6px 0 0">{{ candidates|length }} saved mail candidates · {{ ('Query exhausted' ~ (' · ' ~ scan.failed|length ~ ' unresolved messages' if scan.failed else '')) if scan and scan.exhausted else 'Period incomplete or not started' }}</p></div><a class="button secondary" href="/gmail?{{ period.params|urlencode }}">{{ 'Review mail' if scan and scan.exhausted else 'Load period' }}</a></div>
+{% if gmail.connection %}<div class="card account-card"><div><p class="eyebrow">Gmail</p><strong>{{ gmail.connection.email }}</strong><p class="muted small" style="margin:6px 0 0">{{ candidates|length }} saved mail candidates · {{ ('Gmail search ended' ~ (' · ' ~ scan.failed|length ~ ' unresolved messages' if scan.failed else '')) if scan and scan.exhausted else 'Period incomplete or not started' }}</p></div><a class="button secondary" href="{{ '/saved' if scan and scan.exhausted else '/gmail' }}?{{ period.params|urlencode }}">{{ 'Inspect outcomes' if scan and scan.exhausted else 'Load period' }}</a></div>
 {% else %}<div class="card account-card"><div><p class="eyebrow">Gmail</p><strong>Not connected</strong></div><a class="button" href="/gmail">Connect Gmail</a></div>{% endif %}
 <div class="warning">Saved ledger facts only, not a complete bank statement.{% if gmail.connection %}{% if not scan or not scan.exhausted %} Gmail retrieval for this period is incomplete or not started.{% elif scan.failed %} {{ scan.failed|length }} unresolved messages: mail coverage is incomplete.{% endif %}{% endif %}</div>
+{{ unreadable_notice(candidates, period) }}
 <div class="stats">
 <section class="stat card"><span class="label">Accepted records</span><p class="value">{{ report.counts.get('accepted', 0) }}</p></section>
 <section class="stat card"><span class="label">Pending / uncertain</span><p class="value">{{ report.counts.get('pending', 0) + report.counts.get('corrected', 0) }}</p></section>
@@ -27,7 +28,7 @@
 {% else %}<p class="empty">0 results: no included purchases in {{ chart.currency }}.</p>{% endif %}</figure>
 {% endfor %}
 </div></section>
-{% else %}<div class="card empty"><span class="empty-icon" aria-hidden="true">▥</span><h3>No confirmed totals in this period.</h3><p>0 results eligible for charts.</p><div class="actions"><a class="button secondary" href="/saved?{{ period.params|urlencode }}">Inspect saved data</a><a href="/review">Review queue</a></div></div>{% endfor %}
+{% else %}<div class="card empty"><span class="empty-icon" aria-hidden="true">▥</span><h3>No confirmed totals in this period.</h3><p>0 results eligible for charts.</p><div class="actions"><a class="button secondary" href="/saved?{{ period.params|urlencode }}">Inspect saved data</a><a href="/gmail?{{ period.params|urlencode }}">Load mail</a></div></div>{% endfor %}
 </section>
 <section id="monthly-transactions" class="card" style="margin-top:24px"><div class="section-heading"><div><h2>Transactions</h2><p>{{ report.rows|length }} dated records</p></div><a href="/ledger">All records</a></div>
 {% if report.rows %}<table class="data-table" aria-label="Transactions"><thead><tr><th scope="col">Event / date</th><th scope="col">Card / account / avenue</th><th scope="col">Kind / magnitude</th><th scope="col">Decision / summary</th></tr></thead><tbody>{% for row in report.rows %}{% set t = row.transaction %}<tr data-event="{{ t.event_id }}" data-included="{{ 'no' if row.exclusion else 'yes' }}" {% if t.amount.value %}data-currency="{{ t.amount.value.currency }}" data-minor="{{ t.amount.value.minor_units }}"{% endif %} data-kind="{{ t.kind.value or 'unknown' }}"><td><a href="/transaction?event_id={{ t.event_id|urlencode }}">{{ t.merchant.value or t.event_id }}</a><small>{{ t.occurred_on.value }}</small></td><td>{{ row.group }}</td><td>{{ t.kind.value or t.kind.status }}<small class="amount">{{ money(t.amount.value.currency, t.amount.value.minor_units) if t.amount.value else 'Amount unknown / unresolved' }}</small></td><td><span class="badge {{ t.review.status }}">{{ t.review.status }}</span><small>{{ row.exclusion or ('Included in purchase charts' if t.kind.value == 'purchase' else 'Separate kind summary') }}</small></td></tr>{% endfor %}</tbody></table>

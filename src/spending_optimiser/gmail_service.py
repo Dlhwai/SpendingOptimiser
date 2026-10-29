@@ -1,7 +1,8 @@
-"""One local account, explicit bounded period scans and saved mail. No extraction/AI."""
+"""One local account, explicit bounded mail loading and deterministic local processing."""
 
 import hashlib
 import secrets
+import sqlite3
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -11,6 +12,7 @@ from .gmail import AuthenticationFailure, GmailAdapter, GmailRestClient
 from .gmail_auth import EnvStore, GmailProblem, GoogleOAuth, client_config
 from .mail_cache import MailCache, fresh_state
 from .monthly import SINGAPORE
+from .processing import process_saved
 
 # Proven per-message failures: retained for targeted retry without blocking later pages.
 PERSISTENT = {"invalid_message", "response_too_large"}
@@ -39,6 +41,7 @@ class GmailService:
         self.notice_range = None
         self.notice = None
         self.problem = None
+        self.processing_error = False
         # Sign-in progress for the browser. `attempt` changes on every Connect request;
         # `busy` spans begin/callback so a poll never sees a half-finished attempt as idle.
         self.attempt = 0
@@ -55,6 +58,7 @@ class GmailService:
         self.connection_id = secrets.token_urlsafe(24)
         self.notice_range = None
         self.notice = None
+        self.processing_error = False
 
     def attempted(self, action, *args):
         """Run a sign-in step, recording its failure before it stops counting as busy."""
@@ -181,10 +185,21 @@ class GmailService:
         ):
             raise ValueError("Choose 1-5 pages and Continue, Retry failed messages or Refresh")
         connection, namespace = self.connection, self.namespace
+        try:
+            self._load_range(period, pages, action, connection, namespace)
+        finally:
+            if self.connection is connection:
+                # Saved mail commits first. Processing errors must not claim a mail-save failure.
+                try:
+                    self.processing_error = bool(process_saved(self.cache, namespace))
+                except (ValueError, OSError, sqlite3.Error):
+                    self.processing_error = True
+
+    def _load_range(self, period, pages, action, connection, namespace):
         state = fresh_state() if action == "refresh" else self.cache.state(namespace, period)
         self.notice_range = period.key
         if action == "continue" and state["exhausted"]:
-            self.notice = "Period already exhausted. Refresh period to check for new mail."
+            self.notice = "Gmail search ended. Saved mail processed; Refresh checks for new mail."
             return
         adapter = GmailAdapter(self.client_factory(self), namespace)
         self.problem = None

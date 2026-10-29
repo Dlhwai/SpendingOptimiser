@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% from 'components.html' import period_hidden, period_picker, provider_connect, provider_panels %}
+{% from 'components.html' import period_hidden, period_picker, provider_connect, provider_panels, processing_summary, unreadable_notice %}
 {% set step = 1 %}
 {% block title %}Connect Gmail{% endblock %}
 {% block content %}
@@ -13,12 +13,16 @@
 </section>
 {% if gmail.connection %}
 {% if gmail.notice and (gmail.notice_range is none or gmail.notice_range == period.key) %}<p class="notice" role="status">{{ gmail.notice }}</p>{% endif %}
-<section class="card load-panel" aria-labelledby="load-heading"><div class="section-heading"><div><h2 id="load-heading">{{ period.label }}</h2><p>{{ count }} saved candidates · {{ scan.pages }} pages completed · {{ scan.duplicates }} duplicate IDs skipped · {{ scan.failed|length }} unresolved messages</p></div><span class="badge {{ 'accepted' if scan.exhausted and not scan.failed else 'pending' }}">{{ (('Exhausted · ' ~ scan.failed|length ~ ' unresolved') if scan.failed else 'Query exhausted') if scan.exhausted else ('Incomplete period' if scan.started else 'Not loaded') }}</span></div>
+<section class="card load-panel" aria-labelledby="load-heading"><div class="section-heading"><div><h2 id="load-heading">{{ period.label }}</h2><p>{{ candidates|length }} saved candidates · {{ scan.pages }} pages completed · {{ scan.duplicates }} duplicate IDs skipped · {{ scan.failed|length }} unresolved messages</p></div><span class="badge {{ 'accepted' if scan.exhausted and not scan.failed else 'pending' }}">{{ 'Gmail search ended' if scan.exhausted else ('More mail to load' if scan.started else 'Not loaded') }}</span></div>
 {{ period_picker('/gmail', period, 'mail') }}
 {% if scan.errors %}<p class="error-note" role="alert">Partial / failed retrieval: {{ scan.errors|join(', ') }}</p>{% endif %}
 {% if scan.failed %}<p class="warning" role="status">{{ scan.failed|length }} messages could not be saved ({{ scan.failed.values()|unique|join(', ') }}). Period coverage is incomplete.</p>{% endif %}
-{% if scan.exhausted %}<p class="warning">Query exhausted, not proof of complete financial coverage.</p>{% endif %}
-<form class="load-form" action="/gmail/month" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="connection_id" value="{{ gmail.connection_id }}">{{ period_hidden(period) }}<div><label for="pages">Pages per action</label><select id="pages" name="pages">{% for pages in [1,2,3,4,5] %}<option value="{{ pages }}" {{ 'selected' if pages == 2 else '' }}>{{ pages }} pages · up to {{ pages * 20 }} IDs</option>{% endfor %}</select></div><div class="actions">{% if not scan.exhausted %}<button name="action" value="continue">{{ 'Continue period' if scan.started else 'Load period' }}</button>{% endif %}{% if scan.failed %}<button class="secondary" name="action" value="retry">Retry failed messages</button>{% endif %}<button class="secondary" name="action" value="refresh">Refresh period</button></div></form>
+{{ unreadable_notice(candidates, period) }}
+{{ processing_summary(outcomes, processing_pending, gmail, period, template_pending) }}
+<p class="subtle-note">Saved emails teach reusable local templates. Explicit, unambiguous financial facts become transactions automatically. No ChatGPT required.</p>
+<details class="disclosure"><summary>Local templates &amp; limits</summary><p class="warning">Learning structure does not verify a transaction. Currency, event kind, financial date and account identity must be explicit. Compatible plain-text/HTML alternatives are checked together; conflicting or incomplete evidence stays excluded. Sender labels, masked card suffixes and receipt dates are not substitutes for missing facts.</p></details>
+{% if scan.exhausted %}<p class="warning">No more results in this Gmail search. Missing, unreadable or unsupported mail means this is not complete financial coverage.</p>{% endif %}
+<form class="load-form" action="/gmail/month" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="connection_id" value="{{ gmail.connection_id }}">{{ period_hidden(period) }}<div><label for="pages">Pages per action</label><select id="pages" name="pages">{% for pages in [1,2,3,4,5] %}<option value="{{ pages }}" {{ 'selected' if pages == 2 else '' }}>{{ pages }} pages · up to {{ pages * 20 }} IDs</option>{% endfor %}</select></div><div class="actions">{% if not scan.exhausted or processing_pending or template_pending %}<button name="action" value="continue">{{ 'Continue saved processing' if scan.exhausted else ('Continue period' if scan.started else 'Load period') }}</button>{% endif %}{% if scan.failed %}<button class="secondary" name="action" value="retry">Retry failed messages</button>{% endif %}<button class="secondary" name="action" value="refresh">Refresh period</button></div></form>
 <p class="subtle-note">Last query: {{ scan.checked_at or 'not started' }} · <a href="/saved?{{ period.params|urlencode }}">Inspect saved data</a></p></section>
 {% endif %}
 {% endblock %}

@@ -4,6 +4,7 @@ import argparse
 import hmac
 import json
 import os
+import re
 import secrets
 import sqlite3
 import sys
@@ -40,8 +41,11 @@ from .dotenv_store import DotenvError, DotenvFile, default_env_path
 from .gmail_auth import MESSAGES, EnvStore, GmailProblem, configure_google
 from .gmail_service import GmailService
 from .ledger import CORRECTION_FIELDS, Conflict, Ledger, heads, needs_review, uncertain
+from .local_templates import discovery_pending
 from .monthly import (
     SINGAPORE,
+    exclusion,
+    foreign_events,
     format_money,
     grouping,
     latest_end,
@@ -49,6 +53,7 @@ from .monthly import (
     selected_range,
     shortcuts,
 )
+from .processing import REVISION
 from .public_terms import ISSUERS
 from .storage import Storage
 
@@ -295,6 +300,56 @@ def create_app(
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
+    def processing_view(view, candidates):
+        document = ledger.load()
+        sources = {
+            o.observation_id: o
+            for o in document.observations
+            if o.source_system == "gmail" and o.source_namespace == view.namespace
+        }
+        hidden = foreign_events(document, view.namespace)
+        latest = {}
+        for transaction in heads(document):
+            if transaction.event_id in hidden:
+                continue
+            for origin in transaction.origins:
+                source = sources.get(origin.observation_id)
+                if source is not None:
+                    associated = latest.setdefault(source.source_record_id, {})
+                    associated[transaction.event_id] = transaction
+        outcomes = view.cache.outcomes(view.namespace, REVISION) if view.namespace else {}
+        result = {}
+        for message_id, candidate in candidates.items():
+            processed = outcomes.get(message_id, {"outcome": "awaiting processing", "reasons": ()})
+            outcome = {
+                "outcome": "unreadable" if candidate is None else processed["outcome"],
+                "reasons": ("saved_payload_unreadable_retry_load",)
+                if candidate is None
+                else processed["reasons"],
+                "events": [
+                    {
+                        "event_id": t.event_id,
+                        "status": t.review.status,
+                        "included": exclusion(t) is None,
+                    }
+                    for t in latest.get(message_id, {}).values()
+                ],
+            }
+            outcome["included"] = any(event["included"] for event in outcome["events"])
+            outcome["prior_version"] = outcome["outcome"] in {
+                "failed",
+                "awaiting processing",
+                "unreadable",
+            }
+            result[message_id] = outcome
+        return {
+            "outcomes": result,
+            "template_pending": discovery_pending(view.cache, view.namespace),
+            "processing_pending": view.cache.pending_count(view.namespace, REVISION)
+            if view.namespace
+            else 0,
+        }
+
     @app.get("/gmail", response_class=HTMLResponse)
     def gmail_page(request: Request):
         session = request.session.setdefault("id", secrets.token_urlsafe(32))
@@ -308,9 +363,10 @@ def create_app(
             gmail=view,
             messages=MESSAGES,
             period=period,
-            count=len(candidates),
+            candidates=candidates,
             scan=scan,
             waiting=waiting,
+            **processing_view(view, candidates),
         )
 
     @app.get("/saved", response_class=HTMLResponse)
@@ -326,8 +382,13 @@ def create_app(
             period=period,
             candidates=candidates,
             scan=scan,
-            matches=ai.format_proposals(candidates) if view.connection else {},
+            matches=ai.format_proposals(
+                {key: candidate for key, candidate in candidates.items() if candidate is not None}
+            )
+            if view.connection
+            else {},
             archived=storage.mail_archived(view.namespace, period),
+            **processing_view(view, candidates),
         )
 
     @app.get("/storage", response_class=HTMLResponse)
@@ -594,7 +655,7 @@ def create_app(
             request,
             "overview.html",
             period=period,
-            report=range_report(document, period),
+            report=range_report(document, period, foreign_events(document, view.namespace)),
             candidates=candidates,
             scan=scan,
             added=request.query_params.get("added"),
@@ -605,17 +666,20 @@ def create_app(
     @app.get("/ledger", response_class=HTMLResponse)
     def ledger_page(request: Request):
         document = ledger.load()
-        transactions = heads(document)
+        hidden = foreign_events(document, gmail.namespace)
+        transactions = [t for t in heads(document) if t.event_id not in hidden]
         chosen = any(name in request.query_params for name in ("month", "start", "end"))
         period = selected_range(request.query_params) if chosen else None
         if period:
-            transactions = [row["transaction"] for row in range_report(document, period)["rows"]]
+            transactions = [
+                row["transaction"] for row in range_report(document, period, hidden)["rows"]
+            ]
         return render(
             request,
             "ledger.html",
             transactions=transactions,
             review_count=sum(needs_review(t) for t in transactions),
-            revision_count=len(document.transactions),
+            revision_count=sum(t.event_id not in hidden for t in document.transactions),
             review_only=False,
             period=period,
             selected=period or selected_range({}),
@@ -629,13 +693,14 @@ def create_app(
     @app.get("/review", response_class=HTMLResponse)
     def queue(request: Request):
         document = ledger.load()
-        transactions = [t for t in heads(document) if needs_review(t)]
+        hidden = foreign_events(document, gmail.namespace)
+        transactions = [t for t in heads(document) if needs_review(t) and t.event_id not in hidden]
         return render(
             request,
             "ledger.html",
             transactions=transactions,
             review_count=len(transactions),
-            revision_count=len(document.transactions),
+            revision_count=sum(t.event_id not in hidden for t in document.transactions),
             added=None,
             review_only=True,
         )
@@ -645,7 +710,7 @@ def create_app(
         document = ledger.load()
         history = [t for t in document.transactions if t.event_id == event_id]
         transaction = next((t for t in heads(document) if t.event_id == event_id), None)
-        if transaction is None:
+        if transaction is None or event_id in foreign_events(document, gmail.namespace):
             raise HTTPException(404, "Unknown event")
         observation_ids = {o.observation_id for t in history for o in t.origins}
         refs = [m for t in history for m in walk(t) if isinstance(m, EvidenceRef)]
@@ -661,6 +726,41 @@ def create_app(
             fields=CORRECTION_FIELDS,
             observations=[o for o in document.observations if o.observation_id in observation_ids],
             evidence=[e for e in document.evidence if e.revision_id in public_ids],
+            mail_sources=sorted(
+                {
+                    (r.evidence_revision_id, r.locator.split(":", 2)[1])
+                    for r in refs
+                    if r.target == "observation"
+                    and re.match(r"mail-version:[a-f0-9]{64}:", r.locator)
+                }
+            ),
+        )
+
+    @app.get("/mail-source", response_class=HTMLResponse)
+    def mail_source(request: Request, observation_id: str, version: str):
+        observation = next(
+            (o for o in ledger.load().observations if o.observation_id == observation_id), None
+        )
+        if (
+            not observation
+            or observation.source_system != "gmail"
+            or observation.source_namespace != gmail.namespace
+        ):
+            raise HTTPException(404, "Unknown saved source")
+        candidate = gmail.cache.version(gmail.namespace, observation.source_record_id, version)
+        if candidate is None:
+            raise HTTPException(404, "Unknown saved source version")
+        return render(
+            request,
+            "source.html",
+            candidate=candidate,
+            version=version,
+            back="/saved?"
+            + urlencode(
+                {"month": candidate.gmail_internal_at.astimezone(SINGAPORE).strftime("%Y-%m")}
+            )
+            + "#mail-"
+            + candidate.observation.source_record_id,
         )
 
     def import_result(text):
@@ -696,7 +796,17 @@ def create_app(
         fields = {"revision_id", "actor", "reason", "status", "field", "fact_json"}
         form = await form_data(request, fields)
         values = {name: text_field(form, name) for name in fields}
-        transaction = await run_in_threadpool(ledger.review, **values)
+
+        def save_review():
+            document = ledger.load()
+            target = next(
+                (t for t in document.transactions if t.revision_id == values["revision_id"]), None
+            )
+            if target and target.event_id in foreign_events(document, gmail.namespace):
+                raise HTTPException(404, "Unknown event")
+            return ledger.review(**values)
+
+        transaction = await run_in_threadpool(gmail_operation, save_review)
         return RedirectResponse(
             "/transaction?" + urlencode({"event_id": transaction.event_id}), status_code=303
         )

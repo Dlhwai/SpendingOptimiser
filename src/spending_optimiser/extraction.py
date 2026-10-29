@@ -68,6 +68,7 @@ LABELS = {
     "Posting date": "posted_on",
     "Merchant": "merchant",
 }
+ACCOUNT_REFERENCE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}")
 
 
 class EvidenceSpan(Model):
@@ -258,6 +259,21 @@ def _fact(field: str, spans: tuple[EvidenceSpan, ...], observation: Observation)
     return Fact(status="proposed", value=values[0], evidence=evidence)
 
 
+def notification_event_id(observation: Observation) -> str:
+    """One bounded event per notification. No amount/date identity heuristics."""
+    source_key = json.dumps(
+        [
+            observation.source_system,
+            observation.source_namespace,
+            observation.source_record_id,
+            "primary",
+        ],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    return "notification-" + hashlib.sha256(source_key.encode()).hexdigest()
+
+
 class NotificationExtractor:
     def __init__(self, model: ModelCallable):
         self._model = model
@@ -366,21 +382,9 @@ class NotificationExtractor:
         posting_date = facts["posted_on"].value
         if event_date and posting_date and posting_date < event_date:
             issues.append("posting_precedes_event")
-        # One bounded event per notification. No amount/date identity heuristics.
-        source_key = json.dumps(
-            [
-                observation.source_system,
-                observation.source_namespace,
-                observation.source_record_id,
-                "primary",
-            ],
-            ensure_ascii=True,
-            separators=(",", ":"),
-        )
-        event_id = "notification-" + hashlib.sha256(source_key.encode()).hexdigest()
         transaction = Transaction.model_validate(
             {
-                "event_id": event_id,
+                "event_id": notification_event_id(observation),
                 "revision_id": run.revision_id,
                 "recorded_at": run.recorded_at,
                 "origins": (

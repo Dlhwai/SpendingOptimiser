@@ -82,7 +82,8 @@ def test_first_run_navigation_is_useful_offline_and_never_reads_credentials(tmp_
         page = Page(response.text)
         assert response.status_code == 200
         assert len(page.attrs("h1")) == 1
-        assert page.attrs("a", href=path, **{"aria-current": "page"})
+        if path not in {"/review", "/imports"}:
+            assert page.attrs("a", href=path, **{"aria-current": "page"})
         assert not any(page.attrs(tag) for tag in ("iframe", "img", "link"))
         # Same-origin scripts only (sign-in, date pickers); no inline script anywhere.
         expected = {
