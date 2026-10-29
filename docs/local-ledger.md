@@ -217,13 +217,11 @@ financial source data. Large histories are loaded as one document, so this
 milestone is intended for small local ledgers, not high-volume workloads.
 
 Evidence checks establish links and chronology, not the truth of a quote or a
-reviewer's financial interpretation. Deterministic monthly saved-data projections are documented in [monthly.md](monthly.md).
-No statement balancing, adaptive extraction,
-AI calls, scheduling, monthly budget, reward engine, or researched card terms are
-implemented here. Gmail OAuth and read-only candidate loading are a separate
-implemented feature, documented in [gmail.md](gmail.md). Later integration still needs sanitized bank
-notification examples, credentials with an agreed privacy boundary, and verified
-product/term information. Those inputs do not block this offline milestone.
+reviewer's financial interpretation. See [monthly projections](monthly.md) for
+saved-data summaries and [automatic transactions](automatic-transactions.md) for the
+implemented mail-to-ledger path and its learning limits. [Gmail](gmail.md) owns connection setup
+and live-verification limits; remaining product limitations and planned work are in
+the [README](../README.md#current-limits) and [project summary](../summary.md).
 
 ## Validation
 

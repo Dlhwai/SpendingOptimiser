@@ -32,9 +32,9 @@ or analysis button.
 This month, Last month and Last 3 months. A period is one day up to three calendar
 months, and the server enforces that limit. See [periods and charts](docs/monthly.md).
 
-**Storage.** Once usage is above 1,000,000,000 bytes the app compresses older detail
-by itself after each write. Nothing is deleted and nothing needs to be run. See
-[storage](docs/storage.md).
+**Storage.** The app automatically compresses eligible older detail after supported
+writes. Nothing is deleted and nothing needs to be run. See
+[storage](docs/storage.md) for the trigger, retention window and recovery.
 
 ## Set up and run
 
@@ -104,10 +104,8 @@ uv run --locked python examples/gmail_synthetic.py               # adapter only,
   teach reusable templates, including supported narrative/HTML forms, but structure
   alone never proves financial semantics or account identity. Unresolved formats and
   missing facts remain excluded. See [supported limits](docs/automatic-transactions.md).
-- Each explicit Load/Continue/Refresh/Retry discovers up to 100 saved versions and
-  processes up to 100 current messages from the connected account. Older versions
-  teach structure, not extra transactions. Continue handles the remaining backlog
-  after Gmail search ends, without refetching. No GET/startup/timer learning or processing.
+- Processing is bounded per explicit load action. See
+  [discovery limits and saved-mail continuation](docs/automatic-transactions.md#ordinary-trigger-and-continuation).
 - Private templates/evidence stay local. Only closed-schema, value-free generic forms
   may be reusable Git assets; private literals, source links and fingerprints are excluded.
 - Unsupported/uncertain mail stays inspectable and excluded. Machine acceptance does

@@ -278,16 +278,11 @@ The sidebar has three steps: **1 Connect Gmail**, **2 Inspect saved data** and
    receipt time. Expand a row to view the complete subject, unverified headers and
    escaped normalized text. HTML is never executed, images never loaded, URLs never
    followed and embedded instructions never acted upon. Display is capped at 10,000
-   characters per candidate with a size notice. Each explicit load action then
-   first discovers up to 100 previously undiscovered saved versions and then processes
-   up to 100 current saved messages from this account, including older candidates,
-   through [private local template learning/application](automatic-transactions.md).
-   Historical versions teach structure but never add transactions. HTML/plain-text
-   representations are checked for conflicts. Explicit financial and Account evidence allow acceptance;
-   unsupported/uncertain cases stay inline and excluded. No model is called.
-   **Continue saved processing** handles any remaining backlog even after Gmail search
-   ends, without refetching. Processing failures leave committed mail saved and are
-   reported separately. Optional accepted AI layouts remain unsaved diagnostic proposals.
+   characters per candidate with a size notice. For source-processing outcomes and
+   bounded local continuation after a load, see
+   [automatic transactions](automatic-transactions.md#ordinary-trigger-and-continuation).
+   Optional accepted AI layouts remain
+   [unsaved diagnostic proposals](subscription-ai.md#what-is-supported).
 6. **Refresh period** restarts this period's query with bounded pages, retaining
    saved candidates and deduplicating by stable account/message identity. Changed
    content versions are preserved. Continue until exhausted again; previous
@@ -322,10 +317,8 @@ encryption**, scoped by stable Google identity, including headers, message text,
 every retained content version, failed-message IDs and successful-ID/page-token
 continuation. Existing ledger records stay intact. Local database format 2 supports
 verified compressed payloads, not encryption; JSON schema stays 1.0. Protect
-disk/backups. [Storage](storage.md) keeps the current Singapore month plus the two
-before it uncompressed, whichever period you view, and compresses eligible older
-detail automatically after each write once usage is above 1 decimal GB. It can
-restore a selected account and period locally. Saved mail is
+disk/backups. See [Storage](storage.md) for the automatic compression trigger,
+retention window and local restoration of a selected account and period. Saved mail is
 retained indefinitely; there is no purge or deletion action. Disconnect does not
 remove the local cache or ledger history, only visible access and authorization.
 
@@ -367,10 +360,11 @@ wrong hostname, an unknown authority, a redirect and an oversized response are
 refused. `tests/test_provider_script.py`
 runs the real sign-in script (needs Node) against a recording browser stand-in. The
 synthetic Chrome walkthrough uses a mock consent page and fake transport, not real
-Google sign-in. `tests/test_processing.py` covers the durable automatic path and its
-failure/history/account boundaries. `examples/automatic_preview.py` begins with an
-empty ledger and demonstrates real mail-load-to-ledger behavior with fictional messages. Reproduce it with
+Google sign-in. Reproduce that walkthrough with
 `uv run --locked python examples/ui_preview.py --port 8876`; see the README.
+`tests/test_processing.py` covers the durable automatic path and its failure/history/account
+boundaries; use the separate [automatic-processing preview](automatic-transactions.md#synthetic-proof)
+to start from an empty ledger.
 
 **Still requires the user:** perform the Cloud/client setup above, put the client in
 `.env`, complete explicit Google consent from the app's Connect action, and verify

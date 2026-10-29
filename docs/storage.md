@@ -140,7 +140,9 @@ earlier completed mail pages remain saved.
 VACUUM runs only after compression commits, using SQLite's own transactional
 recovery.
 
-Corrupt archives produce an explicit error, not an empty result. Restoration
+Saved-mail and period views flag unreadable or identity-invalid messages while
+keeping other saved data usable. Compressed-version counts omit unreadable payloads;
+explicit source-version reads fail instead of returning empty source text. Restoration
 rolls back instead of discarding an unreadable version; other accounts and the
 uncompressed ledger remain usable. A corrupt cold import does not block monthly
 calculations. Keep the damaged DB for recovery and restore a known-good backup;

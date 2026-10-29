@@ -85,11 +85,21 @@ when there is no contradictory financial content. They do not create noisy ledge
 Uppercase month names and company abbreviations are not mistaken for supported currency codes.
 
 This example was authored for synthetic testing, not copied from a bank. Other
-layouts can be learned when their slot meanings fit the supported semantics. A new
-layout, a currency-bearing value without field authority, multiple events, ambiguous
-account attribution, conflicting/partial representations or non-final activity
-stays uncertain or unsupported. Identical complete plain-text/HTML alternatives
+layouts can be learned when their slot meanings fit the supported semantics. A
+currency-bearing value without field authority, multiple events, ambiguous account
+attribution, conflicting/partial representations or non-final activity stays uncertain
+or unsupported.
+
+Financial representations must independently establish kind, amount/currency, event
+date and account attribution and agree before facts are combined. Recognized card/account
+fields and transaction headings cannot be ignored as irrelevant alternatives. Incomplete
+financial alternatives yield uncertainty without projected facts, rather than supplying
+each other's missing fields. Bare date/time/masked-identifier slots and irrelevant text
+do not by themselves make a part financial. Identical complete plain-text/HTML alternatives
 represent one event; multiple same-type financial parts are not silently deduplicated.
+
+An adapter `ambiguous_subject` warning also prevents automatic acceptance. It is not
+equivalent to a genuinely absent subject; the retained headers remain inspectable.
 
 Work is bounded to eight inline parts, 16,384 normalized characters per part and
 65,536 total characters. Mail markup stays inert; scripts, images and external links
@@ -164,8 +174,9 @@ state stay in the local database, outside public schema exports and AI analysis.
 Normal whole-database backup retains this state. No public-example or manual
 sample-review prerequisite is imposed on local discovery.
 
-The shareable `examples/email_templates.json` package asset is a locally reconstructed
-closed schema of MIME enums and known grammar/field-role tokens only. It contains no
+The shareable `src/spending_optimiser/examples/email_templates.json` package asset is
+locally reconstructed from a closed schema of MIME enums and known grammar/field-role
+tokens only. It contains no
 raw text, actual values, identifiers, source fingerprints, private examples, paths or
 hidden metadata. Both generic generation and consumption reject unknown fields or
 strings before any model-visible read. Synthetic sentinel tests exercise this
@@ -177,10 +188,8 @@ required evidence. There is no sharing/export UI, online learning service or plu
 platform. Accepted AI placeholder layouts remain a separate optional diagnostic path;
 private mail never goes to that model.
 
-Compression remains automatic above the existing strict 1 decimal GB trigger with
-the fixed current-Singapore-month-plus-two hot window, checked lossless archives and
-warnings/retries. Viewing dates do not change retention. Optional recovery/import and
-storage diagnostics remain under Saved mail's **Recovery & developer tools** disclosure.
+See [storage](storage.md) for automatic compression, retention and lossless recovery,
+and [local ledger](local-ledger.md) for optional snapshot import and corrections.
 
 ## Synthetic proof
 

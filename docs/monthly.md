@@ -134,16 +134,11 @@ Rules that apply to every period:
 
 ## Extraction and privacy boundary
 
-[Automatic local processing](automatic-transactions.md) now creates canonical
-accepted transactions through private local template discovery/application after
-explicit Load/Continue/Refresh/Retry. Supported narrative, labelled and HTML layouts
-still require unambiguous financial fields and explicit Account evidence. Each action
-handles up to 100 undiscovered saved versions and 100 current candidates. Historical
-versions teach structure only; Continue handles a remaining local backlog
-after search ends without refetch. Unsupported/uncertain mail is inline and excluded.
-The optional model-span use case and accepted safe-layout diagnostic proposals stay
-separate; neither can broaden automatic acceptance. No private mail goes to the
-[AI workflow](subscription-ai.md). Page views never change ledger facts.
+See [automatic transactions](automatic-transactions.md) for mail-to-ledger acceptance,
+uncertainty, discovery limits and saved-mail continuation. The standalone
+[model-span use case](extraction.md) and [safe-layout diagnostic proposals](subscription-ai.md#what-is-supported)
+remain separate paths; see the [AI privacy boundary](subscription-ai.md#privacy-and-enforcement)
+for eligible model inputs. Page views never process mail or change ledger facts.
 
 ## Saved mail and storage
 
