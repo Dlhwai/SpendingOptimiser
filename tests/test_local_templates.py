@@ -337,6 +337,108 @@ def test_assertion_reuse_never_turns_a_debit_into_a_purchase_without_type_eviden
     assert total(load(service, "refresh"), currency="USD") == 1925
 
 
+@pytest.mark.parametrize(
+    "first, second",
+    [
+        ("debited", "debited"),
+        ("credited", "credited"),
+        ("debited", "credited"),
+        ("credited", "debited"),
+    ],
+)
+@pytest.mark.parametrize("second_amount", ["19.25", "20.00"])
+@pytest.mark.parametrize("alternative", [False, True])
+def test_multiple_debit_credit_assertions_are_excluded_before_fact_deduplication(
+    tmp_path, first, second, second_amount, alternative
+):
+    from html import escape
+
+    line = (
+        "An amount of USD 19.25 was debited on 3 February 2025 "
+        "using account reference travel-wallet."
+    )
+    control = "Purchase confirmation\n" + line.replace("debited", first)
+    service, fake, client = setup(tmp_path, {"one": control})
+    if alternative:
+        original_message = fake.get_message
+
+        def with_alternative(identity):
+            message = original_message(identity)
+            raw = "".join(
+                f"<p>{escape(value)}</p>" for value in fake.bodies[identity].splitlines()
+            ).encode()
+            message["payload"] = {
+                "mimeType": "multipart/alternative",
+                "parts": [
+                    message["payload"],
+                    {
+                        "mimeType": "text/html",
+                        "body": {"size": len(raw), "data": base64.urlsafe_b64encode(raw).decode()},
+                    },
+                ],
+            }
+            return message
+
+        fake.get_message = with_alternative
+    original = load(service)
+    assert (
+        heads(original)[0].review.status == "accepted" and total(original, currency="USD") == 1925
+    )
+    fake.bodies["one"] = (
+        control + "\n" + line.replace("debited", second).replace("19.25", second_amount)
+    )
+    saved = candidate(service, fake)
+    facts, _, outcome, reasons = extract(saved, "synthetic-multiple-assertions", saved.observation)
+    assert outcome == "uncertain" and "multiple_event_types" in reasons
+    assert facts["amount"].status == ("proposed" if second_amount == "19.25" else "conflicting")
+    document = load(service, "refresh")
+    transaction = heads(document)[0]
+    assert transaction.review.status == "pending" and total(document, currency="USD") == 0
+    assert transaction.direction.value is None
+    assert transaction.event_id == original.transactions[0].event_id
+    assert document.transactions[0] == original.transactions[0]
+    assert len(transaction.amount.evidence) == (4 if alternative else 2)
+    parts = {part.locator: part for part in saved.parts}
+    for ref in transaction.amount.evidence:
+        _, digest, locator, _, start, end = ref.locator.split(":")
+        assert parts[locator].text[int(start) : int(end)] == ref.quote
+    templates = LocalTemplates(service.cache)
+    assert (
+        "multiple_event_types"
+        in templates.apply(service.namespace, "one", digest, saved, saved.observation)[2]
+    )
+    results = [
+        apply_generic(form, saved, digest, saved.observation)
+        for form in templates.generic_forms()["forms"]
+    ]
+    assert all(result[1] != "accepted" for result in results)
+    assert any("multiple_event_types" in result[2] for result in results)
+    assert "Excluded from totals" in client.get("/saved?month=2025-02").text
+    assert load(service, "refresh") == document
+    fake.bodies["one"] = control
+    restored = load(service, "refresh")
+    assert total(restored, currency="USD") == 1925
+    assert restored.transactions[:2] == document.transactions
+
+
+@pytest.mark.parametrize("kind", ["purchase", "refund", "transfer"])
+@pytest.mark.parametrize("verb", ["debited", "credited"])
+def test_mixed_narrative_assertion_families_do_not_collapse_to_equal_facts(kind, verb):
+    control = NARRATIVE.replace("purchase", kind)
+    fake = Notifications({"one": control})
+    adapter = GmailAdapter(fake, "synthetic-mixed-assertions")
+    saved = adapter.get_candidate("one").candidate
+    assert extract(saved, "single-assertion", saved.observation)[2] == "accepted"
+    fake.bodies["one"] = control + (
+        f"\nAn amount of USD 19.25 was {verb} on 3 February 2025 "
+        "using account reference travel-wallet."
+    )
+    saved = adapter.get_candidate("one").candidate
+    facts, _, outcome, reasons = extract(saved, "mixed-assertions", saved.observation)
+    assert outcome == "uncertain" and "multiple_event_types" in reasons
+    assert facts["amount"].value.minor_units == 1925
+
+
 def test_bundled_generic_assets_are_closed_and_functionally_reusable(tmp_path):
     service, fake, _ = setup(tmp_path, {"one": NARRATIVE, "two": BODY})
     forms = bundled_forms()

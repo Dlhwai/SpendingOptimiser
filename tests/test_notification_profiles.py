@@ -12,7 +12,7 @@ from test_processing import BODY, Notifications, load, setup, total
 
 from spending_optimiser.gmail import GmailAdapter
 from spending_optimiser.ledger import heads
-from spending_optimiser.local_templates import LocalTemplates
+from spending_optimiser.local_templates import LocalTemplates, apply_generic
 from spending_optimiser.processing import REVISION, extract
 
 CARD = (
@@ -116,6 +116,149 @@ def test_completed_profiles_reconcile_all_explicit_currency_evidence(tmp_path, b
         transaction = heads(document)[0]
         assert transaction.review.status == "pending"
         assert total(document, kind=kind) == 0 and transaction.review.reason
+
+
+@pytest.mark.parametrize(
+    "body, before, after, reason, kind, minor",
+    [
+        (CARD, "EXAMPLE-REF-A", "EXAMPLE-REF-B", "notice_reference_conflicting", "purchase", 1234),
+        (CARD, "EXAMPLE-REF-A", "example-ref-a", "notice_reference_conflicting", "purchase", 1234),
+        (
+            WALLET.replace("03 Feb 09:15", "03 Feb 2025 09:15"),
+            "EXAMPLE-WALLET-A",
+            "EXAMPLE-WALLET-B",
+            "notice_reference_conflicting",
+            "transfer",
+            789,
+        ),
+        (
+            WALLET.replace("03 Feb 09:15", "03 Feb 2025 09:15"),
+            "Fictional Recipient",
+            "Another Fictional Recipient",
+            "payee_conflicting",
+            "transfer",
+            789,
+        ),
+        (
+            WALLET.replace("03 Feb 09:15", "03 Feb 2025 09:15"),
+            "Fictional Recipient",
+            "fictional Recipient",
+            "payee_conflicting",
+            "transfer",
+            789,
+        ),
+        (
+            CARD,
+            "Fictional Merchant",
+            "Another Fictional Merchant",
+            "merchant_conflicting",
+            "purchase",
+            1234,
+        ),
+    ],
+)
+@pytest.mark.parametrize("reverse", [False, True])
+def test_qualifying_profile_alternatives_must_agree_before_projection(
+    tmp_path, body, before, after, reason, kind, minor, reverse
+):
+    import base64
+    from html import escape
+
+    service, fake, client = setup(tmp_path, {"one": body})
+    single = load(service)
+    assert heads(single)[0].review.status == "accepted" and total(single, kind=kind) == minor
+    original_message = fake.get_message
+    alternative = body.replace(before, "  " + before + "  ")
+
+    def with_alternative(identity):
+        message = original_message(identity)
+        raw = "".join(f"<p>{escape(line)}</p>" for line in alternative.splitlines()).encode()
+        parts = [
+            message["payload"],
+            {
+                "mimeType": "text/html",
+                "body": {"size": len(raw), "data": base64.urlsafe_b64encode(raw).decode()},
+            },
+        ]
+        message["payload"] = {
+            "mimeType": "multipart/alternative",
+            "parts": parts[::-1] if reverse else parts,
+        }
+        return message
+
+    fake.get_message = with_alternative
+    compatible = load(service, "refresh")
+    assert (
+        heads(compatible)[0].review.status == "accepted" and total(compatible, kind=kind) == minor
+    )
+    learned_count = definitions(service)
+    alternative = body.replace(before, "  " + after + "  ")
+    saved = candidate(service, fake)
+    facts, _, outcome, reasons = extract(saved, "synthetic-conflicting-profile", saved.observation)
+    assert outcome == "uncertain" and reason in reasons
+    assert facts["amount"].value.minor_units == minor
+    document = load(service, "refresh")
+    transaction = heads(document)[0]
+    assert transaction.review.status == "pending" and reason in transaction.review.reason
+    assert total(document, kind=kind) == 0
+    assert transaction.account_id.value == heads(compatible)[0].account_id.value
+    assert transaction.kind.value == kind and transaction.card_id.value is None
+    if kind == "transfer":
+        assert transaction.merchant.value is None and transaction.transfer_purpose.value is None
+    assert document.transactions[:2] == compatible.transactions
+    assert definitions(service) == learned_count
+    parts = {part.locator: part for part in saved.parts}
+    for fact in (transaction.amount, transaction.occurred_on, transaction.account_id):
+        for ref in fact.evidence:
+            _, digest, locator, _, start, end = ref.locator.split(":")
+            assert parts[locator].text[int(start) : int(end)] == ref.quote
+    templates = LocalTemplates(service.cache)
+    assert reason in templates.apply(service.namespace, "one", digest, saved, saved.observation)[2]
+    results = [
+        apply_generic(form, saved, digest, saved.observation)
+        for form in templates.generic_forms()["forms"]
+    ]
+    assert all(result[1] != "accepted" for result in results)
+    assert any(reason in result[2] for result in results)
+    assert service.cache.version(service.namespace, "one", digest).parts == saved.parts
+    response = client.get(
+        "/mail-source",
+        params={"observation_id": transaction.origins[0].observation_id, "version": digest},
+    )
+    assert response.status_code == 200 and before in response.text and after in response.text
+    assert "Excluded from totals" in client.get("/saved?month=2025-02").text
+    assert load(service, "refresh") == document
+
+
+def test_profile_agreement_does_not_reconcile_unrelated_transport_recipients():
+    import base64
+
+    body = BODY + "\nTo: first@example.invalid\nTransaction Ref: HEADER-A"
+    alternative = body.replace("first@example.invalid", "other@example.invalid").replace(
+        "HEADER-A", "HEADER-B"
+    )
+    fake = Notifications({"one": body})
+    original_message = fake.get_message
+
+    def with_alternative(identity):
+        message = original_message(identity)
+        raw = alternative.encode()
+        message["payload"] = {
+            "mimeType": "multipart/alternative",
+            "parts": [
+                message["payload"],
+                {
+                    "mimeType": "text/html",
+                    "body": {"size": len(raw), "data": base64.urlsafe_b64encode(raw).decode()},
+                },
+            ],
+        }
+        return message
+
+    fake.get_message = with_alternative
+    saved = GmailAdapter(fake, "synthetic-non-profile-metadata").get_candidate("one").candidate
+    facts, _, outcome, reasons = extract(saved, "non-profile-control", saved.observation)
+    assert outcome == "accepted" and not reasons and facts["amount"].value.minor_units == 1234
 
 
 INVALID_CONTRACT_FIELDS = [

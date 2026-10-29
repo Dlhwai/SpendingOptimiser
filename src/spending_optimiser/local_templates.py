@@ -568,7 +568,10 @@ def analyze(candidate):
             for m in MONEY.finditer(text)
         ):
             issues.append("unbound_monetary_value")
-        if len([b for b in found if b.role in {"kind", "purchase", "refund", "transfer"}]) > 1:
+        if (
+            len([b for b in found if b.role in {"kind", "purchase", "refund", "transfer"}]) > 1
+            or len([b for b in found if b.grammar.endswith("_assertion")]) > 1
+        ):
             issues.append("multiple_event_types")
         if re.search(
             r"(?i)\b(?:declined|unsuccessful|failed|pending|cancelled|rejected|not completed)\b",
@@ -726,6 +729,13 @@ def facts_from(analysis, digest, observation):
             }
         )
     profile = {role: facts.pop(role) for role in PROFILE_ROLES}
+    if any(
+        b.role == "kind" and b.grammar in {"completed_card_dmy2", "completed_wallet_transfer"}
+        for b in analysis.bindings
+    ):
+        for role in ("notice_reference", "payee"):
+            if profile[role].status == "conflicting":
+                issues.append(f"{role}_conflicting")
     if (
         not analysis.financial
         and (profile["administrative_notice"].evidence or analysis.nonfinancial_subject)
