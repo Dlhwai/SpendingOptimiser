@@ -7,6 +7,7 @@ from dataclasses import replace
 from datetime import date
 
 import pytest
+from saved_view import saved_text
 from test_local_templates import candidate, definitions
 from test_processing import BODY, Notifications, load, setup, total
 
@@ -51,8 +52,6 @@ def test_completed_card_profile_accepts_source_reference_not_underlying_card_map
     assert transaction.card_id.value is transaction.channel.value is None
     assert document.accounts[0].kind == "other"
     assert "9999" not in document.accounts[0].label
-    # Status stays within the heading column, not the narrow mobile expander column.
-    assert '<span class="badge">accepted</span></span>' in client.get("/saved?month=2025-02").text
     source = candidate(service, fake)
     facts, _, outcome, _ = extract(source, "fictional-version", source.observation)
     assert outcome == "accepted"
@@ -226,7 +225,7 @@ def test_qualifying_profile_alternatives_must_agree_before_projection(
         params={"observation_id": transaction.origins[0].observation_id, "version": digest},
     )
     assert response.status_code == 200 and before in response.text and after in response.text
-    assert "Excluded from totals" in client.get("/saved?month=2025-02").text
+    assert "Excluded from totals" in saved_text(service)
     assert load(service, "refresh") == document
 
 
@@ -379,7 +378,7 @@ def test_profile_completeness_checks_every_mime_representation(tmp_path, body, k
     assert transaction.review.status == "pending" and total(document, kind=kind) == 0
     assert "invalid_notification_contract" in transaction.review.reason
     assert document.transactions[0] == original.transactions[0]
-    assert "Excluded from totals" in client.get("/saved?month=2025-02").text
+    assert "Excluded from totals" in saved_text(service)
     saved = candidate(service, fake)
     parts = {part.locator: part for part in saved.parts}
     for fact in (transaction.amount, transaction.occurred_on, transaction.account_id):

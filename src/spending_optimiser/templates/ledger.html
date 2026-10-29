@@ -1,9 +1,8 @@
 {% extends 'base.html' %}
 {% from 'components.html' import inspect_tabs, period_picker, transactions_table %}
-{% set step = 2 %}
 {% block title %}{{ 'Review queue' if review_only else 'Transactions' }}{% endblock %}
 {% block content %}
-<div class="page-head"><div><p class="eyebrow">Step 2 of 3</p><h1>{{ 'Review queue' if review_only else 'Transactions' }}</h1></div></div>
+<div class="page-head"><div><p class="eyebrow">Records</p><h1>{{ 'Review queue' if review_only else 'Transactions' }}</h1></div></div>
 {{ inspect_tabs('review' if review_only else 'transactions', period) }}
 {% if not review_only %}{{ period_picker('/ledger', selected, 'ledger', period is not none) }}<div class="period-links"><a class="inline-link" href="/ledger">All saved records</a>{% if period %}<a class="inline-link" href="/?{{ period.params|urlencode }}">{{ period.label }} summary</a>{% endif %}</div>{% endif %}
 <section class="card table-card"><div class="section-heading"><div><h2>{{ transactions|length }} {{ 'queued ' if review_only else '' }}event{{ '' if transactions|length == 1 else 's' }}</h2><p>{{ review_count }} need review · {{ revision_count }} historical transaction revision{{ '' if revision_count == 1 else 's' }}{% if period %} · {{ period.label }}{% endif %}</p></div></div>

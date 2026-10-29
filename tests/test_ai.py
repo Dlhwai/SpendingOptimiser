@@ -891,9 +891,11 @@ def test_new_format_accepted_layout_parses_matching_candidates_without_ai(app, c
     )
     assert loaded.status_code == 200
     assert len(gmail.saved_range(month)[0]) == 4
-    page = client.get("/saved?month=2025-02").text
-    assert page.count("Matched accepted layout") == 4
-    assert "SGD 1234 minor units" in page
+    matches = ai.format_proposals(
+        {key: c for key, c in gmail.saved_range(month)[0].items() if c is not None}
+    )
+    assert len(matches) == 4
+    assert all(match.amount.value.minor_units == 1234 for match in matches.values())
     assert len(ai.client.inputs) == 1
     assert not app.state.ledger.load().transactions
     zero = candidate("Claimed purchase: SGD 0.00")
@@ -907,9 +909,10 @@ def test_new_format_accepted_layout_parses_matching_candidates_without_ai(app, c
     )
     gmail.cache.save(gmail.namespace, month, gmail.saved_range(month)[1], [zero])
     assert len(gmail.saved_range(month)[0]) == 5
-    response = client.get("/saved?month=2025-02")
-    assert response.status_code == 200
-    assert response.text.count("Matched accepted layout") == 4
+    matches = ai.format_proposals(
+        {key: c for key, c in gmail.saved_range(month)[0].items() if c is not None}
+    )
+    assert len(matches) == 4
     assert client.get("/?month=2025-02").status_code == 200
     assert len(ai.client.inputs) == 1
     assert not app.state.ledger.load().transactions

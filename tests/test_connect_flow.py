@@ -134,8 +134,7 @@ def test_connect_buttons_target_one_named_window_with_an_explicit_fallback(clien
         assert page.attrs("input", name="display", value="window", type="hidden")  # <noscript>
         blocked = page.attrs("div", **{"data-auth-blocked": name})
         assert blocked and blocked[0]["role"] == "alert" and "hidden" in blocked[0]
-        picker = [{"src": "/static/period-picker.js"}] if path == "/gmail" else []
-        assert page.attrs("script") == [*picker, {"src": "/static/provider-connect.js"}]
+        assert page.attrs("script") == [{"src": "/static/provider-connect.js"}]
 
 
 def test_script_is_served_same_origin_without_caching_or_sniffing(client):

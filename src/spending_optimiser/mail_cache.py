@@ -6,10 +6,11 @@ extractor revision has handled, so repeated processing is a no-op.
 
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from pydantic import TypeAdapter
 
+from .cards import CardBook
 from .gmail import Candidate
 from .ledger import Ledger
 from .monthly import SINGAPORE
@@ -42,12 +43,25 @@ def fresh_state():
         "pages": 0,
         "duplicates": 0,
         "errors": [],
+        # Singapore day on which the listing last ended cleanly (None: never).
+        "finished_on": None,
     }
+
+
+def scan_clean(state):
+    """The whole listing was read and every message in it was saved."""
+    return bool(state["exhausted"] and not state["failed"] and not state["errors"])
+
+
+def scan_start(key):
+    """First day of a stored scan key: YYYY-MM, or START..END days."""
+    return date.fromisoformat(key[:10] if ".." in key else key + "-01")
 
 
 class MailCache:
     def __init__(self, database):
         self.ledger = Ledger(database)
+        self.cards = CardBook(self.ledger)
         with self.ledger.connection() as db:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS mail_versions (namespace TEXT NOT NULL, "
@@ -65,6 +79,10 @@ class MailCache:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS mail_scans (namespace TEXT NOT NULL, "
                 "month TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(namespace, month))"
+            )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS mail_refresh (namespace TEXT PRIMARY KEY, "
+                "payload TEXT NOT NULL)"
             )
             db.execute(
                 "CREATE TABLE IF NOT EXISTS mail_processing (namespace TEXT NOT NULL, "
@@ -90,6 +108,8 @@ class MailCache:
         return {**fresh_state(), **json.loads(row[0])} if row else fresh_state()
 
     def save(self, namespace, period, state, candidates):
+        """Commit mail and scan progress together. Returns how many new versions were stored."""
+        added = 0
         with self.ledger.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             for candidate in candidates:
@@ -101,7 +121,7 @@ class MailCache:
                 digest = hashlib.sha256(
                     json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
                 ).hexdigest()
-                db.execute(
+                added += db.execute(
                     "INSERT OR IGNORE INTO mail_versions "
                     "(namespace, message_id, digest, payload, receipt_month) "
                     "VALUES (?, ?, ?, ?, ?)",
@@ -112,7 +132,7 @@ class MailCache:
                         CANDIDATE.dump_json(candidate).decode(),
                         candidate.gmail_internal_at.astimezone(SINGAPORE).strftime("%Y-%m"),
                     ),
-                )
+                ).rowcount
                 # Returning to a previously seen version still needs a new canonical revision.
                 db.execute(
                     "DELETE FROM mail_processed_current WHERE namespace=? AND message_id=? "
@@ -131,6 +151,100 @@ class MailCache:
             )
 
         self.ledger.maintain_storage()
+        return added
+
+    def refresh_state(self, namespace):
+        """Account-wide refresh progress: the day through which loading last finished cleanly."""
+        with self.ledger.connection() as db:
+            row = db.execute(
+                "SELECT payload FROM mail_refresh WHERE namespace=?", (namespace,)
+            ).fetchone()
+        return json.loads(row[0]) if row else {"through": None}
+
+    def save_refresh_state(self, namespace, state):
+        with self.ledger.connection() as db:
+            db.execute(
+                "INSERT INTO mail_refresh VALUES (?, ?) "
+                "ON CONFLICT(namespace) DO UPDATE SET payload=excluded.payload",
+                (namespace, json.dumps(state)),
+            )
+
+    def has_mail(self, namespace):
+        with self.ledger.connection() as db:
+            return (
+                db.execute(
+                    "SELECT 1 FROM mail_current WHERE namespace=? LIMIT 1", (namespace,)
+                ).fetchone()
+                is not None
+            )
+
+    def saved_ids(self, namespace):
+        """Message IDs already saved for one account, so a new search never fetches them again."""
+        with self.ledger.connection() as db:
+            rows = db.execute(
+                "SELECT message_id FROM mail_current WHERE namespace=? ORDER BY message_id",
+                (namespace,),
+            ).fetchall()
+        return [row[0] for row in rows]
+
+    def latest_received(self, namespace):
+        """Receipt instant of the newest current saved message, or None when nothing is saved."""
+        with self.ledger.connection() as db:
+            months = [
+                row[0]
+                for row in db.execute(
+                    "SELECT DISTINCT v.receipt_month FROM mail_current c JOIN mail_versions v "
+                    "ON v.namespace=c.namespace AND v.message_id=c.message_id "
+                    "AND v.digest=c.digest WHERE c.namespace=?",
+                    (namespace,),
+                )
+            ]
+            unknown = [
+                (message_id, payload)
+                for message_id, payload in db.execute(
+                    "SELECT c.message_id, v.payload FROM mail_current c JOIN mail_versions v "
+                    "ON v.namespace=c.namespace AND v.message_id=c.message_id "
+                    "AND v.digest=c.digest WHERE c.namespace=? AND v.receipt_month IS NULL",
+                    (namespace,),
+                )
+            ]
+            known = sorted(month for month in months if month is not None)
+            newest = known[-1] if known else None
+            current = (
+                db.execute(
+                    "SELECT c.message_id, v.payload FROM mail_current c JOIN mail_versions v "
+                    "ON v.namespace=c.namespace AND v.message_id=c.message_id "
+                    "AND v.digest=c.digest WHERE c.namespace=? AND v.receipt_month=?",
+                    (namespace, newest),
+                ).fetchall()
+                if newest
+                else []
+            )
+        latest = None
+        for message_id, payload in [*current, *unknown]:
+            try:
+                received = decode_candidate(namespace, message_id, payload).gmail_internal_at
+            except (ValueError, RecursionError):
+                continue
+            if latest is None or received > latest:
+                latest = received
+        return latest
+
+    def unfinished_start(self, namespace):
+        """Earliest first day among earlier scans that never read their whole listing."""
+        with self.ledger.connection() as db:
+            rows = db.execute(
+                "SELECT month, payload FROM mail_scans WHERE namespace=?", (namespace,)
+            ).fetchall()
+        starts = []
+        for key, payload in rows:
+            state = {**fresh_state(), **json.loads(payload)}
+            if state["started"] and not scan_clean(state):
+                try:
+                    starts.append(scan_start(key))
+                except ValueError:
+                    continue
+        return min(starts, default=None)
 
     def candidates(self, namespace, period):
         """Current receipt-period mail by saved identity; None marks an unreadable payload."""

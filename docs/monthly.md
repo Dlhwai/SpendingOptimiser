@@ -1,17 +1,17 @@
 # Periods, saved mail and charts
 
-Step 3, **Understand this month**, summarises **saved ledger facts** for a period you
+Step 3, **Optimise spending**, summarises **saved ledger facts** for a period you
 choose: a single day, a calendar month or any run of days up to three calendar months.
 It is not a Gmail parser, a bank statement or an AI dashboard. Every page view reads
 local data only, never calls Gmail or a model, and never changes saved data. There is
-no chatbot or background sync. Explicit load actions create supported automatic
+no chatbot or background sync. An explicit **Refresh** creates supported automatic
 transactions; merely viewing this overview never processes mail. The optional
 [safe-reference AI workflow](subscription-ai.md) is a separate tab.
 
 ## Choosing a period
 
-Every page that shows month data (Connect Gmail, Saved mail, Transactions, Storage's
-restore form and this overview) has the same control:
+Every page that shows period data (this overview, Transactions and Storage's restore
+form) has the same control:
 
 - **From** and **To** date inputs. They are the browser's own date inputs, so the
   calendar opens from the field and the keyboard works: type the digits, or use the
@@ -64,40 +64,33 @@ Both ends may fall in differently named months or years, such as 30 Dec 2024 to
   keeps `min` and `max` in step when From changes. Without it the form still works and
   the server decides.
 
-## Loading mail for a period
+## Loading mail
+
+Periods only choose what to *view*. Mail is loaded by the single **Refresh** button on
+Connect Gmail, which covers the days since the last saved email through today and is not
+limited to three months; see [Gmail](gmail.md#start-connect-load-refresh-disconnect) for the interval, bounds,
+resume rules and the wording it may use.
 
 1. Start `uv run --locked spending-optimiser` and open http://127.0.0.1:8765.
 2. In **Connect Gmail** (step 1), complete the [one-time Gmail setup](gmail.md) and
    connect through the sign-in window. No mail is fetched at sign-in or startup.
-3. Choose a period and **View**. This reads SQLite only. **Load period** downloads up
-   to the chosen 1-5 pages of 20 message IDs (default 2). Duplicate IDs count toward
-   that bound.
-4. **Continue period** until **Gmail search ended**. **Retry failed messages** re-fetches
-   only messages that were proven undecodable (`invalid_message`) or too large
-   (`response_too_large`), up to 20 per selected page. **Refresh period** restarts the
-   query while keeping and deduplicating saved mail.
+3. Press **Refresh**. Choosing a period and **View** reads SQLite only.
 
-Rules that apply to every period:
+Rules that apply to every load:
 
 - The Gmail query uses epoch seconds for the Singapore midnights that open and close
-  the period, excluding spam and trash. A local half-open filter on Gmail's receipt
+  each subrange, excluding spam and trash. A local half-open filter on Gmail's receipt
   time then decides membership. Mail received at 00:30 on 1 March in Singapore belongs
   to 1 March even though its UTC time is 28 February.
-- **Progress belongs to one Google account and exactly one period.** The checkpoint
-  (page token, successful IDs, unresolved IDs with codes, page and duplicate counts,
-  errors, exhaustion) is stored under the account and the period's key. A form for
-  another account or a stale connection is refused before any request is made.
-- **Coverage never spreads.** A scan covers only the period it loaded. Loading a
-  whole month does not mark one day inside it, or a range across it, as loaded, and
-  two loaded neighbouring months do not make a range across them loaded. Mail already
-  saved for any period is still listed wherever it falls, but an unscanned period says
-  **Not loaded** or **More mail to load** until it is exhausted itself.
+- **Progress belongs to one Google account.** The checkpoint (page token, successful
+  IDs, unresolved IDs with codes, errors, exhaustion) is stored under the account and
+  each subrange's key, with the account's start day beside it. A form for another
+  account or a stale connection is refused before any request is made.
+- **Coverage never spreads.** A subrange covers only the days it loaded.
 - Successful candidates survive failures. A failed listing, network, rate-limit or
-  authentication error never advances the page, so Continue retries it. Unsuccessful
-  retries move to the end of the persisted order, so repeated bounded retries reach
-  later messages even across restarts. Exhaustion with unresolved messages is labelled
-  incomplete, and exhaustion is never proof of complete financial coverage or a stable
-  mailbox snapshot.
+  authentication error never advances the page, so the next Refresh retries it.
+  Exhaustion with unresolved messages is reported as not finished, and exhaustion is
+  never proof of complete financial coverage or a stable mailbox snapshot.
 - There are no automatic retries, mailbox backfills, watches or schedules.
 - Receipt time is Gmail's `internalDate`. It is not the financial event date, and
   user-supplied financial facts keep their own date-only event dates.
@@ -117,14 +110,20 @@ Rules that apply to every period:
   acceptance does not verify bank truth.
 - Records with no known event date cannot be placed in any period. Their ledger-wide
   count and links are under **Coverage**.
-- Records are grouped by the explicit `(card_id, account_id, channel)` tuple. An
-  unknown card or channel stays **Card unassigned / Avenue unknown**. Nothing is
-  guessed from mail, product names or account type.
+- Records are grouped by the explicit `(card_id, account_id, channel)` tuple. A card or
+  wallet an alert states ("DBS/POSB card ending NNNN") is named as stated, followed by
+  the product you chose on **Cards**. An unknown card or channel stays **Card
+  unassigned / Avenue unknown**. Nothing is guessed from mail, product names or
+  account type.
 - Money is integer minor units in the schema's 0, 2 or 3 place exponents. Each
   currency has its own summary and charts; there is no FX or mixed-currency total.
 - Amounts are unsigned magnitudes, not bank postings. Purchases, refunds, reversals,
-  income and transfers are shown separately and never netted. Charts show purchases
-  only. No balance, net spend, reward or budget is invented.
+  income and transfers are shown separately and never netted. **Spending** adds two
+  parts that stay separate: card purchases, and transfers whose *explicit* direction is
+  outflow (a PayLah!/PayNow wallet payment). Incoming transfers, transfers of unknown
+  direction and transfers marked as moves between your own accounts or card
+  repayments are not spending. Each event counts once. No balance, net spend or budget
+  is invented. Rewards are [estimates](rewards.md), never bank-confirmed amounts.
 - The bar chart, the daily timeline, the totals, the transactions table and the
   **Transactions** list use the same records. Each chart has an exact-data table.
   The daily chart omits days without purchases. An empty period shows **0 results**.
@@ -173,9 +172,9 @@ The seeded ledger is fictional schema records, not extracted mail:
 | 8 Feb 2025 | 2 records, SGD 131.50. |
 | 1 to 3 Jun 2025 | 0 results. |
 
-In Connect Gmail, loading February 2025 continues three pages to 5 unique messages
-and 1 duplicate. Loading 31 Jan to 1 Mar 2025 is a separate scan that finds 7 fictional
-messages, including one received at 23:30 on 31 January and one at 00:30 on 1 March.
+In Connect Gmail, the preview's fake transport answers each query from its time window.
+Press **Refresh** to load the fictional messages; the status line says whether the
+interval finished.
 
 ## Validation
 
@@ -188,8 +187,8 @@ uv run --locked ruff format --check .
 The tests use disposable databases, fake stores and transports, and no real OAuth.
 They cover the boundaries above (single day, the exact three-month limit with
 end-of-month clamping, leap and ordinary years, cross-month and cross-year ranges,
-Singapore midnight edges, invalid and over-limit input), period-scoped continuation,
-retry, refresh and account switching, historical month data, and agreement between
-totals, charts and tables. A browser script test compares the date picker's limit with
+Singapore midnight edges, invalid and over-limit input), Refresh intervals, subranges,
+resume and account switching, historical month data, and agreement between totals,
+charts and tables. A browser script test compares the date picker's limit with
 the server for every day across two years. Live Gmail and real-bank extraction
 compatibility are not verified; see [Gmail](gmail.md#validation-readiness-versus-live-verification).

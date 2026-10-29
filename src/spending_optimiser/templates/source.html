@@ -1,5 +1,4 @@
 {% extends 'base.html' %}
-{% set step = 2 %}
 {% block title %}Saved source evidence{% endblock %}
 {% block content %}
 <h1>Saved source evidence</h1>
@@ -7,5 +6,5 @@
 <p>Unverified sender: {{ candidate.sender or 'Unknown' }}</p>
 <h2>{{ candidate.subject or 'Notification' }}</h2>
 {% for part in candidate.parts %}<details open><summary>{{ part.mime_type }} · {{ part.locator }}</summary><pre>{{ part.text }}</pre></details>{% endfor %}
-<p><a href="{{ back }}">Back to saved mail</a></p>
+<p><a href="{{ back }}">Back to records</a></p>
 {% endblock %}

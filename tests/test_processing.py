@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 
 import pytest
 from fastapi.testclient import TestClient
+from saved_view import saved_text
 from test_monthly import FakeMail, connected
 
 from spending_optimiser.document import SchemaDocument
@@ -102,8 +103,8 @@ def test_explicit_load_durably_accepts_and_updates_exact_tables_without_review_o
     home = client.get("/?month=2025-02").text
     assert 'data-included="yes"' in home and 'data-minor="1234"' in home
     assert "SGD 12.34" in home and "Review queue" not in home
-    saved = client.get("/saved?month=2025-02").text
-    assert "1 accepted transactions" in saved and "Transaction, evidence &amp; corrections" in saved
+    saved = saved_text(service)
+    assert "1 accepted transactions" in saved
     detail = client.get("/transaction", params={"event_id": t.event_id})
     assert (
         "Saved notification version" in detail.text
@@ -142,7 +143,7 @@ def test_uncertain_unsupported_and_nonfinancial_mail_is_inline_and_excluded(
     assert total(doc) == 0 and len(heads(doc)) == count
     if count:
         assert heads(doc)[0].review.status == "pending"
-    saved = client.get("/saved?month=2025-02").text
+    saved = saved_text(service)
     assert reason in saved and "Excluded from totals" in saved
     assert len(service.saved_range(PERIOD)[0]) == 1
 
@@ -159,7 +160,7 @@ def test_mime_alternatives_never_produce_an_accepted_event(tmp_path):
 
     fake.get_message = alternatives
     assert total(load(service)) == 0
-    assert "multiple financial parts" in client.get("/saved?month=2025-02").text
+    assert "multiple financial parts" in saved_text(service)
 
 
 def test_repetition_overlap_restart_and_reconnect_keep_one_source_and_one_event(tmp_path):
@@ -227,7 +228,7 @@ def test_reprocessing_does_not_overwrite_human_correction_or_rejection(
     before = service.cache.ledger.load()
     fake.bodies["one"] = BODY.replace("12.34", "999.00")
     assert load(service, "refresh") == before
-    saved = client.get("/saved?month=2025-02").text
+    saved = saved_text(service)
     assert "human or imported decision preserved" in saved
     assert heads(before)[0].review.status == status
 
@@ -315,7 +316,6 @@ def test_processing_is_bounded_and_continues_old_account_backlog_independent_of_
     load(service, period=march)
     assert len(service.cache.ledger.load().transactions) == 100
     assert service.cache.pending_count(service.namespace, REVISION) == 3
-    assert "Continue saved processing" in client.get("/gmail?month=2025-03").text
     load(service, period=march)
     assert len(service.cache.ledger.load().transactions) == 103 and len(fake.calls) == calls
 
@@ -345,9 +345,7 @@ def test_failed_ledger_write_keeps_mail_committed_reports_separately_and_retries
     assert (
         service.processing_error and service.cache.pending_count(service.namespace, REVISION) == 1
     )
-    page = client.get("/gmail?month=2025-02").text
-    assert "Mail remains saved" in page
-    assert "failed" in client.get("/saved?month=2025-02").text
+    assert "failed" in saved_text(service)
     monkeypatch.setattr(service.cache.ledger, "write", original)
     assert len(load(service).transactions) == 2
     assert (
@@ -412,11 +410,11 @@ def test_existing_imported_source_event_is_not_duplicated_even_with_another_even
     other.cache.save(
         other.namespace, PERIOD, other.cache.state(other.namespace, PERIOD), [candidate]
     )
-    browser = TestClient(
+    TestClient(
         create_app(imported_path, gmail_service=other, env_file=tmp_path / ".env"),
         base_url="http://127.0.0.1:8897",
     )
-    saved = browser.get("/saved?month=2025-02").text
+    saved = saved_text(other)
     assert "Current source: Awaiting processing" in saved
     assert "Previous canonical revision: accepted" in saved
     assert "1 accepted transactions" in saved
@@ -464,7 +462,7 @@ def test_automatic_storage_failure_is_a_warning_not_a_lost_mail_or_transaction(
     doc = load(service)
     assert len(service.saved_range(PERIOD)[0]) == 1 and total(doc) == 1234
     assert not service.processing_error
-    assert "Storage maintenance could not finish" in client.get("/saved?month=2025-02").text
+    assert "Storage maintenance could not finish" in client.get("/gmail").text
     assert load(service, "refresh") == doc
 
 
@@ -539,7 +537,7 @@ def test_unreadable_old_payloads_fail_individually_preserve_bytes_and_do_not_sta
     outcomes = service.cache.outcomes(service.namespace, REVISION)
     assert all(outcomes[key]["outcome"] == "failed" for key in old_ids)
     assert outcomes["z-valid"]["outcome"] == "accepted"
-    assert "1 accepted transactions" in client.get("/saved?month=2025-02").text
+    assert "1 accepted transactions" in saved_text(service)
     with service.cache.ledger.connection() as db:
         assert (
             db.execute(
@@ -568,11 +566,10 @@ def test_failed_source_update_shows_current_failure_and_retained_included_revisi
     monkeypatch.setattr(service.cache.ledger, "write", fail_update)
     fake.bodies["one"] = BODY.replace("12.34", "25.00")
     assert load(service, "refresh") == before
-    for path in ("/gmail", "/saved"):
-        page = client.get(path + "?month=2025-02").text
-        assert "1 accepted transactions" in page
-        assert "1 previous canonical revisions remain included" in page
-    saved = client.get("/saved?month=2025-02").text
+    page = saved_text(service)
+    assert "1 accepted transactions" in page
+    assert "1 previous canonical revisions remain included" in page
+    saved = saved_text(service)
     assert "Current source: Failed" in saved
     assert "Previous canonical revision: accepted" in saved
     assert "Excluded from totals" not in saved
@@ -583,7 +580,7 @@ def test_failed_source_update_shows_current_failure_and_retained_included_revisi
     monkeypatch.setattr(service.cache.ledger, "write", original)
     after = load(service)
     assert total(after) == 2500 and len(after.transactions) == 2
-    saved = client.get("/saved?month=2025-02").text
+    saved = saved_text(service)
     assert "Current source: Accepted" in saved and "Previous canonical revision:" not in saved
     assert not service.processing_error
 
@@ -603,11 +600,10 @@ def test_deferred_source_update_shows_earlier_inclusion_until_its_batch_runs(tmp
     deferred = load(service)
     assert total(deferred) == 2468 and len(deferred.transactions) == 2
     assert deferred.transactions[0] == before.transactions[0]
-    for path in ("/gmail", "/saved"):
-        page = client.get(path + "?month=2025-02").text
-        assert "2 accepted transactions" in page
-        assert "1 previous canonical revisions remain included" in page
-    saved = client.get("/saved?month=2025-02").text
+    page = saved_text(service)
+    assert "2 accepted transactions" in page
+    assert "1 previous canonical revisions remain included" in page
+    saved = saved_text(service)
     assert "Current source: Awaiting processing" in saved
     assert "Previous canonical revision: accepted" in saved
     assert "Excluded from totals" not in saved
@@ -617,7 +613,7 @@ def test_deferred_source_update_shows_earlier_inclusion_until_its_batch_runs(tmp
     after = load(service)
     assert total(after) == 3734 and len(after.transactions) == 3
     assert len(fake.calls) == calls
-    assert "Previous canonical revision:" not in client.get("/saved?month=2025-02").text
+    assert "Previous canonical revision:" not in saved_text(service)
 
 
 @pytest.mark.parametrize("partial_failure", [False, True])
@@ -684,12 +680,9 @@ def test_unreadable_current_and_legacy_mail_keep_all_read_routes_and_continuatio
             (payload, receipt_month),
         )
         before = db.execute("SELECT * FROM mail_versions ORDER BY message_id").fetchall()
-    for path in ("/gmail", "/saved", "/"):
-        response = client.get(path + "?month=2025-02")
-        assert response.status_code == 200
-        assert "1 saved messages unreadable or identity-invalid" in response.text
-        assert "Continue saved processing" in response.text
-    saved = client.get("/saved?month=2025-02").text
+    assert client.get("/?month=2025-02").status_code == 200
+    assert "1 saved messages unreadable or identity-invalid" in saved_text(service)
+    saved = saved_text(service)
     assert "Unreadable saved message" in saved and "good" in saved
     assert not service.cache.ledger.load().transactions
     with service.cache.ledger.connection() as db:
@@ -710,10 +703,8 @@ def test_unreadable_current_and_legacy_mail_keep_all_read_routes_and_continuatio
         create_app(service.cache.ledger.path, gmail_service=other, env_file=tmp_path / ".env"),
         base_url="http://127.0.0.1:8897",
     )
-    for path in ("/gmail", "/saved", "/"):
-        response = browser.get(path + "?month=2025-02")
-        assert response.status_code == 200
-        assert "saved messages unreadable or identity-invalid" not in response.text
+    assert browser.get("/?month=2025-02").status_code == 200
+    assert "saved messages unreadable or identity-invalid" not in saved_text(other)
 
 
 @pytest.mark.parametrize("first_status", ["accepted", "rejected"])
@@ -767,21 +758,18 @@ def test_all_imported_heads_are_exposed_and_counted_once_across_shared_saved_sou
         base_url="http://127.0.0.1:8897",
     )
     included = 2 if first_status == "accepted" else 1
-    for path in ("/gmail", "/saved"):
-        response = browser.get(path + "?month=2025-02")
-        assert response.status_code == 200
-        assert f"{included} accepted transactions" in response.text
-        assert "0 other / uncertain messages" in response.text
-        if source_status != "retained":
-            assert f"{included} previous canonical revisions remain included" in response.text
-    saved = browser.get("/saved?month=2025-02").text
+    saved = saved_text(other)
+    assert f"{included} accepted transactions" in saved
+    assert "0 other / uncertain messages" in saved
+    if source_status != "retained":
+        assert f"{included} previous canonical revisions remain included" in saved
     assert f"Current source: {source_status.capitalize()}" in saved
     for event_id in ("Legacy-Event", "legacy-event"):
-        assert saved.count(f'href="/transaction?event_id={event_id}"') == 2
+        assert saved.count(f"/transaction?event_id={event_id}") == 2
         assert browser.get("/transaction", params={"event_id": event_id}).status_code == 200
     if first_status == "rejected":
         assert "revision: rejected" in saved and "Excluded from totals" in saved
-    assert saved.count("Included when its event date matches") == included * 2
+    assert saved.count("Included") == included * 2
     overview = browser.get("/?month=2025-02").text
     assert overview.count('data-included="yes"') == included
     assert other.cache.ledger.load() == before
@@ -802,10 +790,8 @@ def test_corrupt_historical_archive_does_not_block_readable_current_saved_mail(t
             "WHERE digest NOT IN (SELECT digest FROM mail_current)",
             (b"corrupt synthetic historical archive",),
         )
-    for path in ("/gmail", "/saved", "/"):
-        response = client.get(path + "?month=2025-02")
-        assert response.status_code == 200
-        assert "saved messages unreadable or identity-invalid" not in response.text
+    assert client.get("/?month=2025-02").status_code == 200
+    assert "saved messages unreadable or identity-invalid" not in saved_text(service)
     assert total(before) == 1234 and total(after) == 2500
     assert service.cache.ledger.load() == after
 

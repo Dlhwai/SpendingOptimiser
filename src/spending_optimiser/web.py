@@ -33,6 +33,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .ai_inputs import digest
 from .ai_service import AIService
+from .cards import product_options
 from .codex_client import MESSAGES as AI_MESSAGES
 from .codex_client import AIProblem
 from .common import EvidenceRef
@@ -41,10 +42,8 @@ from .dotenv_store import DotenvError, DotenvFile, default_env_path
 from .gmail_auth import MESSAGES, EnvStore, GmailProblem, configure_google
 from .gmail_service import GmailService
 from .ledger import CORRECTION_FIELDS, Conflict, Ledger, heads, needs_review, uncertain
-from .local_templates import discovery_pending
 from .monthly import (
     SINGAPORE,
-    exclusion,
     foreign_events,
     format_money,
     grouping,
@@ -53,8 +52,8 @@ from .monthly import (
     selected_range,
     shortcuts,
 )
-from .processing import REVISION
 from .public_terms import ISSUERS
+from .rewards import card_rewards
 from .storage import Storage
 
 MAX_BODY = 2 * 1024 * 1024
@@ -157,7 +156,7 @@ def create_app(
     templates.env.globals["latest_end"] = latest_end
     scripts = {
         name: files("spending_optimiser").joinpath(f"static/{name}").read_text()
-        for name in ("provider-connect.js", "period-picker.js")
+        for name in ("provider-connect.js", "period-picker.js", "refresh.js")
     }
     # Only an opaque session ID goes in this signed, HttpOnly cookie. Lax permits
     # Google's top-level callback GET; existing mutation CSRF cookie stays Strict.
@@ -300,96 +299,60 @@ def create_app(
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
-    def processing_view(view, candidates):
-        document = ledger.load()
-        sources = {
-            o.observation_id: o
-            for o in document.observations
-            if o.source_system == "gmail" and o.source_namespace == view.namespace
-        }
-        hidden = foreign_events(document, view.namespace)
-        latest = {}
-        for transaction in heads(document):
-            if transaction.event_id in hidden:
-                continue
-            for origin in transaction.origins:
-                source = sources.get(origin.observation_id)
-                if source is not None:
-                    associated = latest.setdefault(source.source_record_id, {})
-                    associated[transaction.event_id] = transaction
-        outcomes = view.cache.outcomes(view.namespace, REVISION) if view.namespace else {}
-        result = {}
-        for message_id, candidate in candidates.items():
-            processed = outcomes.get(message_id, {"outcome": "awaiting processing", "reasons": ()})
-            outcome = {
-                "outcome": "unreadable" if candidate is None else processed["outcome"],
-                "reasons": ("saved_payload_unreadable_retry_load",)
-                if candidate is None
-                else processed["reasons"],
-                "events": [
-                    {
-                        "event_id": t.event_id,
-                        "status": t.review.status,
-                        "included": exclusion(t) is None,
-                    }
-                    for t in latest.get(message_id, {}).values()
-                ],
-            }
-            outcome["included"] = any(event["included"] for event in outcome["events"])
-            outcome["prior_version"] = outcome["outcome"] in {
-                "failed",
-                "awaiting processing",
-                "unreadable",
-            }
-            result[message_id] = outcome
-        return {
-            "outcomes": result,
-            "template_pending": discovery_pending(view.cache, view.namespace),
-            "processing_pending": view.cache.pending_count(view.namespace, REVISION)
-            if view.namespace
-            else 0,
-        }
+    def card_view(view):
+        """Stated cards and wallets of the connected mailbox, and the product chosen for each."""
+        if view.namespace is None:
+            return {}, {}
+        return view.cache.cards.sources(view.namespace), view.cache.cards.choices(view.namespace)
 
     @app.get("/gmail", response_class=HTMLResponse)
     def gmail_page(request: Request):
         session = request.session.setdefault("id", secrets.token_urlsafe(32))
-        period = selected_range(request.query_params)
         waiting = gmail.status(session)["state"] == "pending"  # may record an expired attempt
         view = copy(gmail)  # one account identity per rendered response, even during switches
-        candidates, scan = view.saved_range(period)
         return render(
             request,
             "gmail.html",
             gmail=view,
             messages=MESSAGES,
-            period=period,
-            candidates=candidates,
-            scan=scan,
+            refresh=view.refresh_view(),
             waiting=waiting,
-            **processing_view(view, candidates),
         )
 
-    @app.get("/saved", response_class=HTMLResponse)
-    def saved_page(request: Request):
+    @app.get("/saved")
+    def saved_page():
+        return RedirectResponse("/cards", status_code=303)
+
+    @app.get("/cards", response_class=HTMLResponse)
+    def cards_page(request: Request):
         request.session.setdefault("id", secrets.token_urlsafe(32))
-        period = selected_range(request.query_params)
         view = copy(gmail)
-        candidates, scan = view.saved_range(period)
+        document = ledger.load()
+        sources, choices = card_view(view)
         return render(
             request,
-            "saved.html",
+            "cards.html",
             gmail=view,
-            period=period,
-            candidates=candidates,
-            scan=scan,
-            matches=ai.format_proposals(
-                {key: candidate for key, candidate in candidates.items() if candidate is not None}
-            )
-            if view.connection
-            else {},
-            archived=storage.mail_archived(view.namespace, period),
-            **processing_view(view, candidates),
+            cards={a: c for a, c in sources.items() if c["kind"] == "card"},
+            choices=choices,
+            options=product_options(document),
         )
+
+    @app.post("/cards/choose")
+    async def cards_choose(request: Request):
+        form = await form_data(request, {"account_id", "product_id", "connection_id"})
+        account_id, product_id = text_field(form, "account_id"), text_field(form, "product_id")
+        connection_id = text_field(form, "connection_id")
+
+        def choose():
+            if gmail.connection is None or not secrets.compare_digest(
+                connection_id.encode(), gmail.connection_id.encode()
+            ):
+                raise HTTPException(409, "Account changed; reload before choosing a card")
+            gmail.cache.cards.choose(gmail.namespace, account_id, product_id)
+
+        await run_in_threadpool(gmail_operation, choose)
+        return RedirectResponse("/cards", status_code=303)
 
     @app.get("/storage", response_class=HTMLResponse)
     def storage_page(request: Request):
@@ -428,7 +391,7 @@ def create_app(
             )
 
         await run_in_threadpool(gmail_operation, restore)
-        return RedirectResponse("/saved?" + urlencode(period.params), status_code=303)
+        return RedirectResponse("/storage?" + urlencode(period.params), status_code=303)
 
     @app.post("/gmail/connect", response_class=HTMLResponse)
     async def gmail_connect(request: Request):
@@ -498,6 +461,12 @@ def create_app(
         await run_in_threadpool(gmail_operation, gmail.disconnect)
         return RedirectResponse("/gmail", status_code=303)
 
+    @app.post("/gmail/refresh")
+    async def gmail_refresh(request: Request):
+        form = await form_data(request, {"connection_id"})
+        await run_in_threadpool(gmail_operation, gmail.refresh, text_field(form, "connection_id"))
+        return RedirectResponse("/gmail", status_code=303)
+
     @app.post("/gmail/month")
     async def gmail_month(request: Request):
         form = await form_data(
@@ -516,7 +485,7 @@ def create_app(
             text_field(form, "connection_id"),
             text_field(form, "action"),
         )
-        return RedirectResponse("/gmail?" + urlencode(period.params), status_code=303)
+        return RedirectResponse("/gmail", status_code=303)
 
     def ai_operation(action, *args):
         try:
@@ -650,14 +619,22 @@ def create_app(
         document = ledger.load()
         period = selected_range(request.query_params)
         view = copy(gmail)
-        candidates, scan = view.saved_range(period)
+        hidden = foreign_events(document, view.namespace)
+        sources, choices = card_view(view)
+        names = product_options(document)
+        labels = {
+            account: card["label"]
+            + (f" ({names[choices[account]]})" if choices.get(account) in names else "")
+            for account, card in sources.items()
+        }
+        cards = {a: c for a, c in sources.items() if c["kind"] == "card"}
         return render(
             request,
             "overview.html",
             period=period,
-            report=range_report(document, period, foreign_events(document, view.namespace)),
-            candidates=candidates,
-            scan=scan,
+            report=range_report(document, period, hidden, labels),
+            rewards=card_rewards(document, period, cards, choices, hidden),
+            mail=view.refresh_view(),
             added=request.query_params.get("added"),
             unchanged=request.query_params.get("unchanged"),
             gmail=view,
@@ -755,12 +732,7 @@ def create_app(
             "source.html",
             candidate=candidate,
             version=version,
-            back="/saved?"
-            + urlencode(
-                {"month": candidate.gmail_internal_at.astimezone(SINGAPORE).strftime("%Y-%m")}
-            )
-            + "#mail-"
-            + candidate.observation.source_record_id,
+            back="/ledger",
         )
 
     def import_result(text):

@@ -17,7 +17,7 @@ SPEC = importlib.util.spec_from_file_location(
 PREVIEW = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PREVIEW)
 
-STEPS = ["Connect Gmail", "Inspect saved data", "Understand this month"]
+STEPS = ["Connect Gmail", "Cards", "Optimise spending"]
 STATUS_CLASSES = {"warning", "notice", "error-note"}
 # Descriptive copy the captain asked to remove; none may come back in any rendered page.
 REMOVED_COPY = (
@@ -46,6 +46,17 @@ REMOVED_COPY = (
     "gemini: unavailable",
     "start with your mail",
     "one connection. your choice",
+    "understand this month",
+    "inspect saved data",
+    "inspect outcomes",
+    "other / uncertain messages",
+    "teach reusable local templates",
+    "local templates & limits",
+    "no more results in this gmail search",
+    "not complete financial coverage",
+    "pages per action",
+    "continue period",
+    "load period",
 )
 
 
@@ -141,14 +152,13 @@ def journey(tmp_path):
         "/?month=2025-02": 3,
         "/gmail": 1,
         "/gmail?month=2025-02": 1,
-        "/saved": 2,
-        "/saved?month=2025-02": 2,
-        "/ledger": 2,
-        "/review": 2,
-        "/public": 2,
-        "/imports": 2,
-        "/storage": 2,
-        "/transaction?event_id=test-purchase": 2,
+        "/cards": 2,
+        "/ledger": 0,
+        "/review": 0,
+        "/public": 0,
+        "/imports": 0,
+        "/storage": 0,
+        "/transaction?event_id=test-purchase": 0,
         "/ai": 3,
         f"/ai?snapshot={terms}": 3,
         str(proposal.url).replace("http://127.0.0.1:8876", ""): 3,
@@ -165,16 +175,15 @@ def test_primary_navigation_is_exactly_the_three_steps_on_every_page(journey):
         assert [label for label, _ in layout.steps] == numbered, path
         marked = [index + 1 for index, (_, link) in enumerate(layout.steps) if link["current"]]
         assert marked == ([current] if current else []), path
-        assert [link["href"].split("?")[0] for _, link in layout.steps] == ["/gmail", "/saved", "/"]
+        assert [link["href"].split("?")[0] for _, link in layout.steps] == ["/gmail", "/cards", "/"]
 
 
 def test_existing_capabilities_stay_reachable_through_secondary_controls(journey):
     client, _, app = journey
-    saved = {link["href"] for link in Layout(client.get("/saved").text).links}
-    assert {"/ledger", "/public", "/imports", "/storage"} <= {href.split("?")[0] for href in saved}
-    assert "/review" not in saved
-    labels = {link["text"].strip() for link in Layout(client.get("/saved").text).links}
-    assert not {"Review queue", "Import data", "Storage"} & labels
+    cards = {link["href"] for link in Layout(client.get("/cards").text).links}
+    assert {"/ledger", "/public", "/imports", "/storage"} <= {href.split("?")[0] for href in cards}
+    assert "/review" not in cards and "/saved" not in cards
+    assert client.get("/saved", follow_redirects=False).headers["location"] == "/cards"
     month = {link["href"] for link in Layout(client.get("/?month=2025-02").text).links}
     assert "/ai" in month and "/ledger" in month
     ledger = Layout(client.get("/ledger").text)
@@ -207,7 +216,7 @@ def test_empty_states_stay_meaningful_without_explanations(tmp_path):
     client = TestClient(PREVIEW.preview_app(tmp_path), base_url="http://127.0.0.1:8876")
     for path, expected in (
         ("/", "0 results"),
-        ("/saved", "Connect Gmail to see saved mail"),
+        ("/cards", "Connect Gmail to see cards"),
         ("/ledger", "No transactions yet"),
         ("/review", "Nothing waiting for review"),
         ("/ai", "0 results"),

@@ -1,10 +1,10 @@
 {% extends 'base.html' %}
 {% from 'components.html' import inspect_tabs, period_fields %}
-{% set step = 2 %}
 {% block title %}Storage{% endblock %}
 {% block content %}
-<div class="page-head"><div><p class="eyebrow">Step 2 of 3</p><h1>Storage</h1></div><span class="badge {{ 'pending' if storage.above else 'accepted' }}">{{ 'Above compression trigger' if storage.above else 'Within compression trigger' }}</span></div>
+<div class="page-head"><div><p class="eyebrow">Records</p><h1>Storage</h1></div><span class="badge {{ 'pending' if storage.above else 'accepted' }}">{{ 'Above compression trigger' if storage.above else 'Within compression trigger' }}</span></div>
 {{ inspect_tabs('storage', period) }}
+{% if gmail.notice and gmail.notice_range == period.key %}<p class="notice" role="status">{{ gmail.notice }}</p>{% endif %}
 <section class="card"><h2>{{ '{:,}'.format(storage.bytes) }} bytes managed</h2><p class="muted small">Automatic after each import, review and mail load. Lossless: nothing is deleted. No application-level encryption.</p><p>Compression trigger: above {{ '{:,}'.format(storage.threshold) }} bytes. Hot months start at <strong>{{ storage.hot_start }}</strong>.</p>
 <p><strong>{{ storage.mail_archived }} compressed mail versions · {{ storage.imports_archived }} compressed import receipts</strong></p>
 {% if storage.above %}<p class="warning" role="status">Storage remains above 1 GB. Eligible older data may be absent, already compressed or too small to help.</p>{% endif %}

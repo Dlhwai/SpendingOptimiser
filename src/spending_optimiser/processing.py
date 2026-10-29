@@ -17,7 +17,7 @@ from .local_templates import LocalTemplates, analyze, facts_from
 from .mail_cache import decode_candidate
 from .transactions import Account, EventOrigin, Transaction
 
-REVISION = "local-templates-v9"
+REVISION = "local-templates-v10"
 BATCH_SIZE = 100
 
 
@@ -99,9 +99,13 @@ def process_one(cache, namespace, message_id, digest, payload):
         if owners:
             previous = next((t for t in owners if not t.duplicate_of), owners[0])
             event_id = previous.event_id
-        facts, accounts, outcome, reasons = account_facts(
-            templates.apply(namespace, message_id, digest, candidate, observation), observation
-        )
+        result = templates.apply(namespace, message_id, digest, candidate, observation)
+        stated = result[0].get("account") if result[0] else None
+        references = () if stated is None or stated.value is None else (stated.value,)
+        facts, accounts, outcome, reasons = account_facts(result, observation)
+        for reference in references:
+            # An explicit From line of the notice, kept so the person can say which card it is.
+            cache.cards.note(db, namespace, account_identity(namespace, reference), reference)
         additions = []
         if previous and event_id in protected:
             outcome, reasons = "retained", ("human_or_imported_decision_preserved",)

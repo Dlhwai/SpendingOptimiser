@@ -7,6 +7,7 @@ import base64
 import json
 
 import pytest
+from saved_view import saved_text
 from test_monthly import connected
 from test_processing import BODY, PERIOD, Notifications, load, setup, total
 
@@ -95,7 +96,7 @@ def test_actual_load_learns_then_reuses_non_labelled_layout_across_values_and_re
     assert total(doc, currency="USD") == 10775
     restarted, _ = connected(service.cache.ledger.path, fake)
     assert load(restarted, "refresh") == doc
-    assert "2 accepted transactions" in client.get("/saved?month=2025-02").text
+    assert "2 accepted transactions" in saved_text(service)
     with service.cache.ledger.connection() as db:
         assert db.execute("SELECT count(*) FROM mail_template_sources").fetchone()[0] == 2
 
@@ -155,7 +156,7 @@ def test_html_tables_and_matching_alternatives_are_inert_single_events(tmp_path,
     assert definitions(service) == 1
     (t,) = doc.transactions
     assert t.amount.evidence and all("mail-version:" in ref.locator for ref in t.amount.evidence)
-    text = client.get("/saved?month=2025-02").text
+    text = saved_text(service)
     assert "synthetic sentinel" not in text and "never-fetch.invalid" not in text
     assert load(service, "refresh") == doc
 
@@ -216,16 +217,11 @@ def test_all_saved_versions_teach_boundedly_but_only_current_version_creates_fac
         }
         service.cache.save(service.namespace, PERIOD, state, [saved])
     assert discovery_pending(service.cache, service.namespace) == 103
-    assert (
-        "103 saved versions awaiting local template discovery"
-        in client.get("/gmail?month=2025-02").text
-    )
     assert not service.cache.ledger.load().transactions
     calls = len(fake.calls)
     doc = load(service)
     assert len(doc.transactions) == 1 and total(doc) == 10300
     assert discovery_pending(service.cache, service.namespace) == 2
-    assert "Continue saved processing" in client.get("/gmail?month=2025-02").text
     assert load(service) == doc and len(fake.calls) == calls
     assert discovery_pending(service.cache, service.namespace) == 0
     assert definitions(service) == 1
@@ -413,7 +409,7 @@ def test_multiple_debit_credit_assertions_are_excluded_before_fact_deduplication
     ]
     assert all(result[1] != "accepted" for result in results)
     assert any("multiple_event_types" in result[2] for result in results)
-    assert "Excluded from totals" in client.get("/saved?month=2025-02").text
+    assert "Excluded from totals" in saved_text(service)
     assert load(service, "refresh") == document
     fake.bodies["one"] = control
     restored = load(service, "refresh")
@@ -830,7 +826,7 @@ def test_saved_numeric_continuations_are_inspectable_and_never_counted(
     assert changed.review.status == "pending" and changed.amount.value is None
     assert total(document, currency="USD") == 1000
     assert document.transactions[:2] == original.transactions
-    assert "Excluded from totals" in client.get("/saved?month=2025-02").text
+    assert "Excluded from totals" in saved_text(service)
     digest = changed.kind.evidence[0].locator.split(":")[1]
     saved = service.cache.version(service.namespace, "one", digest)
     assert saved.parts == candidate(service, fake).parts
@@ -879,7 +875,7 @@ def test_invalid_assertions_invalidate_totals_without_losing_source_history(
     document = load(service, "refresh")
     assert heads(document)[0].review.status == "pending" and total(document, currency=currency) == 0
     assert document.transactions[0] == original.transactions[0]
-    assert "Excluded from totals" in client.get("/saved?month=2025-02").text
+    assert "Excluded from totals" in saved_text(service)
     assert load(service, "refresh") == document
 
 
@@ -1060,7 +1056,7 @@ def test_invalid_competing_fields_are_saved_inline_and_excluded(tmp_path, bad_fi
     transaction = heads(document)[0]
     assert total(document) == 0 and transaction.review.status == "pending"
     assert "invalid_explicit_field" in transaction.review.reason
-    assert "Excluded from totals" in client.get("/saved?month=2025-02").text
+    assert "Excluded from totals" in saved_text(service)
     saved = candidate(service, fake)
     assert bad_field in saved.parts[0].text
     for fact in (transaction.amount, transaction.occurred_on, transaction.account_id):

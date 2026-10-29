@@ -3,6 +3,7 @@
 import importlib.util
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -60,6 +61,10 @@ def load(client, app, action="continue"):
     )
 
 
+def refresh(client, app):
+    return post(client, "/gmail/refresh", connection_id=app.state.gmail.connection_id)
+
+
 def connect(client):
     response = post(client, "/gmail/connect")
     url = Page(response.text).attrs("a", rel="noreferrer")[0]["href"]
@@ -87,10 +92,7 @@ def test_first_run_navigation_is_useful_offline_and_never_reads_credentials(tmp_
         assert not any(page.attrs(tag) for tag in ("iframe", "img", "link"))
         # Same-origin scripts only (sign-in, date pickers); no inline script anywhere.
         expected = {
-            "/gmail": [
-                {"src": "/static/period-picker.js"},
-                {"src": "/static/provider-connect.js"},
-            ],
+            "/gmail": [{"src": "/static/provider-connect.js"}],
             "/ledger": [{"src": "/static/period-picker.js"}],
         }.get(path, [])
         assert page.attrs("script") == expected
@@ -119,27 +121,27 @@ def test_missing_google_client_is_reported_honestly_and_preserves_offline_use(tm
     assert len(app.state.ledger.load().transactions) == 1
 
 
-def test_mail_journey_readable_headers_limits_and_no_ledger_side_effects(tmp_path):
+def test_mail_journey_refresh_reports_and_has_no_ledger_side_effects(tmp_path):
     app = PREVIEW.preview_app(tmp_path)
+    app.state.gmail.today = lambda: date(2025, 2, 28)
     client = TestClient(app, base_url="http://127.0.0.1:8876")
     response = connect(client)
     assert "alex.preview@example.invalid" in response.text
+    assert "Press Refresh to load this month" in response.text
     assert app.state.gmail.saved_range(MONTH)[0] == {}
-    load(client, app)
-    response = client.get("/saved?month=2025-02")
+    response = refresh(client, app)
     page = Page(response.text)
-    assert len(page.attrs("details", **{"class": "mail-item"})) == 4
-    assert (
-        "Unverified sender: Orchard Preview &lt;notifications@example.invalid&gt;" in response.text
-    )
-    assert "01 Feb 2025" in response.text
-    assert "Display truncated to 10,000 of" in response.text
-    assert not page.attrs("img")
-    assert page.attrs("script") == [{"src": "/static/period-picker.js"}]  # none from mail
-    assert page.attrs("input", name="start", value="2025-02-01")
-    assert page.attrs("input", name="end", value="2025-02-28")
+    assert "All recent emails are loaded. 4 new." in response.text
+    assert not page.attrs("input", name="pages") and not page.attrs("button", name="action")
+    assert page.attrs("script") == [
+        {"src": "/static/provider-connect.js"},
+        {"src": "/static/refresh.js"},
+    ]
+    candidates = app.state.gmail.saved_range(MONTH)[0]
+    assert len(candidates) == 4 and all(c.text for c in candidates.values())
+    assert candidates["preview-0"].sender == "Orchard Preview <notifications@example.invalid>"
     assert not app.state.ledger.load().transactions
-    assert "4 saved candidates" in load(client, app, action="refresh").text
+    assert "No new emails." in refresh(client, app).text
     assert "alex.preview@example.invalid" in client.get("/").text
     response = post(client, "/gmail/disconnect")
     assert "Gmail disconnected" in response.text
@@ -208,11 +210,10 @@ def test_mail_sender_is_decoded_unambiguous_and_marked_unverified(tmp_path, monk
     client = TestClient(app, base_url="http://127.0.0.1:8876")
     connect(client)
     load(client, app)
-    response = client.get("/saved?month=2025-02")
-    assert "Unverified sender: Unknown/ambiguous" in response.text
-    assert "notifications@example.invalid&gt;Other claim" not in response.text
-    assert "ambiguous_sender" in response.text
-    assert "Unverified sender: Bank \u2713 &lt;n@bank.example.invalid&gt;" in response.text
+    senders = {k: (c.sender, c.warnings) for k, c in app.state.gmail.saved_range(MONTH)[0].items()}
+    assert senders["preview-1"] == (None, ("ambiguous_sender",))
+    assert senders["preview-2"][0] == "Bank \u2713 <n@bank.example.invalid>"
+    assert senders["preview-0"][0] == "Orchard Preview <notifications@example.invalid>"
 
 
 def test_rendered_errors_preserve_exception_headers(tmp_path):
@@ -310,7 +311,7 @@ def test_monthly_preview_uses_singapore_query_and_preserves_pagination(tmp_path,
             "action": "continue",
         },
     )
-    assert response.status_code == 200 and "5 saved candidates" in response.text
+    assert response.status_code == 200
     candidates, state = service.saved_range(MONTH)
     assert set(candidates) == {f"preview-{i}" for i in range(5)}
     assert state["exhausted"] and state["pages"] == 3 and state["duplicates"] == 1

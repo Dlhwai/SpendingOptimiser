@@ -42,7 +42,7 @@ material, credentials, screenshots containing financial data, or exports.
 
 ## Complete synthetic browser workflow
 
-1. For this optional developer/recovery walkthrough, open **Saved mail > Recovery & developer tools > Restore / import a schema snapshot**, then **Import bundled synthetic
+1. For this optional developer/recovery walkthrough, open **Cards > Records & recovery > Import data**, then **Import bundled synthetic
    example**. This imports the exact synthetic schema fixture bundled with the package. Alternatively, upload
    `tests/fixtures/synthetic.json` using **Import a schema document**. Both paths
    run the same validation and persistence code. Paste JSON or upload a file, not
@@ -81,7 +81,7 @@ Reloading any page rereads SQLite. Opening a page never fetches Gmail.
 
 ## Card evidence
 
-**Card evidence** (a tab of **Inspect saved data**) is a read-only list of the public,
+**Card evidence** (under **Cards > Records & recovery**) is a read-only list of the public,
 card-level reference information saved in your local database. It answers "which cards
 and which public sources does the app hold?", not "what did I spend?". It shows three
 groups of records exactly as stored, each expandable to its full JSON:
@@ -118,26 +118,26 @@ workflow's own saved snapshots and never appear here or change the ledger.
 
 ## Workspace navigation
 
-The sidebar has exactly three steps; related views are tabs on their step.
+The sidebar has exactly three steps.
 
-1. **Connect Gmail**: Connect/Restore/Disconnect through a sign-in window, and
-   explicit bounded Load/Continue/Retry/Refresh for a chosen period (a day, a month or
-   up to three calendar months) with retrieval state kept per account and period.
-   See [periods and charts](monthly.md).
-2. **Inspect saved data**, with tabs:
-   - **Saved mail**: persistent source messages with inline processing outcomes and
-     links to transactions/evidence. Supported unambiguous messages are accepted
-     automatically; other formats and uncertain entries are flagged and excluded.
+1. **Connect Gmail**: Connect/Restore/Disconnect through a sign-in window, and one
+   **Refresh** that loads mail from the account's latest saved day through today and
+   processes it. Retrieval state is kept per account. See [Gmail](gmail.md).
+2. **Cards**: the card endings your notifications state, each with a product list.
+   See [rewards](rewards.md). A quiet **Records & recovery** disclosure links to the
+   secondary pages, which belong to no step:
    - **Transactions**: all canonical ledger events, including accepted/rejected ones.
-     Open an event for facts, source evidence, review/correction and immutable history.
+     Open an event for facts, source evidence (saved mail versions), review/correction
+     and immutable history.
    - **Card evidence** (see above): public reference data.
-   - No Review queue, Import data or Storage routine tabs. Correction/rejection is
-     optional at event detail; snapshot import and storage recovery remain under
-     Saved mail's **Recovery & developer tools** disclosure.
-3. **Understand this month**, with tabs **Overview** (canonical transactions for the
-   chosen period, decision counts, separate currency/kind magnitudes, purchase
-   grouping and daily charts, with exclusions) and **Safe AI analysis**. All data comes
-   from saved records, never page-triggered retrieval or AI.
+   - **Import data** and **Storage**: snapshot import and lossless recovery.
+   There is no page that lists saved mail or its processing outcomes; the data stays in
+   the local database and as evidence on each transaction.
+3. **Optimise spending**, with tabs **Overview** (canonical transactions for the
+   chosen period, decision counts, separate currency/kind magnitudes, card purchases and
+   outgoing transfers as separate spending, grouping and daily charts, estimated card
+   rewards, with exclusions) and **Safe AI analysis**. All data comes from saved
+   records, never page-triggered retrieval or AI.
 
 The interface uses local system fonts, server-rendered semantic forms, visible
 keyboard focus and responsive layouts, with no remote assets or frontend build. Its
@@ -176,7 +176,7 @@ disposable synthetic preview for safe UI exploration.
   corrections and edits to identity/origins are rejected. Only one fact is edited
   per action; multiple missing facts can be corrected in successive revisions.
 - Pending/corrected events and events with conflicting fields stay visible inline
-  in Transactions/Saved mail, excluded from totals. No separate review step is required. Rejection is event-level:
+  in Transactions, excluded from totals. No separate review step is required. Rejection is event-level:
   it carries every fact (including corrected or conflicting ones) forward
   unchanged and cannot be combined with a fact correction. Acceptance needs
   resolved kind, positive amount, event date, and known account, plus all

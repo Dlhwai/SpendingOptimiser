@@ -1,7 +1,7 @@
 # Local storage and recoverable older detail
 
 The app compresses older detail by itself, so nothing needs to be run for normal
-use. **Saved mail > Recovery & developer tools > Storage diagnostics & lossless
+use. **Cards > Records & recovery > Storage diagnostics & lossless
 recovery** shows measured bytes, exact paths, archive counts, an optional manual
 check and restoration of saved mail for a period. There is no daemon, scheduler,
 cloud storage or AI involved.
@@ -95,7 +95,7 @@ honestly. Nothing is purged and current working data is not evicted to reach 1 G
 
 Older monthly financial statistics and transaction detail need no restoration.
 Saved mail can also read older compressed candidates: payloads are verified and
-decoded locally in memory. **Restore saved mail** in Saved mail or Storage persists
+decoded locally in memory. **Restore saved mail** in Storage persists
 *all content versions* received in that account's selected period (a day, a range up
 to three calendar months, or a month) back as text in one transaction. This is separate from **Restore saved connection**, which reads
 authorization from `.env`. Archive restoration makes no Google/model
@@ -160,7 +160,7 @@ uv run --locked python examples/storage_preview.py --port 8898 --remain-above
 
 Use an **unused** loopback port, never 8765. Open
 `http://127.0.0.1:8898/storage?month=2025-02`, inspect the above-trigger warning,
-then Saved mail for February 2025 and restore the older versions. The fixture uses
+then restore the older versions of February 2025 in Storage. The fixture uses
 the real desktop routes, fake Gmail/OAuth/credential dependencies, fictional
 multi-currency ledger history and a disposable database. A sparse synthetic
 **non-WAL** sidecar contributes over a decimal GB of logical bytes without

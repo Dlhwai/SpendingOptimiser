@@ -4,6 +4,7 @@ import base64
 from html import escape
 
 import pytest
+from saved_view import saved_text
 from test_local_templates import candidate
 from test_notification_profiles import CARD, WALLET
 from test_processing import BODY, Notifications, load, setup, total
@@ -204,7 +205,7 @@ def test_r12_saved_partial_alternatives_are_inspectable_and_excluded(tmp_path, l
         for form in templates.generic_forms()["forms"]
     ]
     assert results and all(result[1] != "accepted" for result in results)
-    text = client.get("/saved?month=2025-02").text
+    text = saved_text(service)
     assert "Excluded from totals" in text and escape(right.splitlines()[0]) in text
     assert load(service, "refresh") == document
 
@@ -305,7 +306,7 @@ def test_r14_failure_subjects_exclude_success_shaped_bodies(tmp_path, body, kind
         for form in templates.generic_forms()["forms"]
     ]
     assert results and all(result[1] != "accepted" for result in results)
-    text = client.get("/saved?month=2025-02").text
+    text = saved_text(service)
     assert escape(subject) in text and "Excluded from totals" in text
     assert service.cache.version(service.namespace, "one", digest).subject == subject
     assert load(service, "refresh") == document
@@ -345,7 +346,7 @@ def test_r15_all_consumed_financial_roles_require_qualified_representations(
     ]
     assert results and all(result[1] != "accepted" for result in results)
     assert service.cache.version(service.namespace, "one", digest).parts == saved.parts
-    text = client.get("/saved?month=2025-02").text
+    text = saved_text(service)
     assert "Excluded from totals" in text and fragment in text
     assert load(service, "refresh") == document
 
@@ -443,7 +444,7 @@ def test_r16_ambiguous_subject_diagnosis_remains_uncertainty(
         for form in templates.generic_forms()["forms"]
     ]
     assert results and all(result[1] != "accepted" for result in results)
-    text = client.get("/saved?month=2025-02").text
+    text = saved_text(service)
     assert all(escape(subject) in text for subject in subjects)
     assert "ambiguous_subject" in text and "Excluded from totals" in text
     assert load(service, "refresh") == document

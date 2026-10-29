@@ -112,7 +112,6 @@ def test_monthly_preview_seed_and_continuation_use_the_singapore_month(
     ledger = app.state.ledger.load()
     client = TestClient(app, base_url="http://127.0.0.1:8877")
     assert client.get("/?month=2025-02").status_code == 200
-    assert f"Saved candidates: {count}" in client.get("/saved?month=2025-02").text
     fields = {
         "csrf": client.cookies["ledger_csrf"],
         "month": month.key,
@@ -122,7 +121,7 @@ def test_monthly_preview_seed_and_continuation_use_the_singapore_month(
     }
     for page in range(pages, 3):
         response = client.post("/gmail/month", data=fields)
-        assert response.status_code == 200 and response.url.params["month"] == month.key
+        assert response.status_code == 200 and response.url.path == "/gmail"
         candidates, state = service.saved_range(month)
         assert len(candidates) == (2, 4, 5)[page]
         assert state["pages"] == page + 1
@@ -309,9 +308,12 @@ def test_singapore_receipt_boundaries_agree_across_query_saved_mail_and_report(t
         create_app(tmp_path / "test.sqlite3", gmail_service=service),
         base_url="http://127.0.0.1:8877",
     )
-    page = client.get("/saved?month=2025-03").text
-    assert "01 Mar 2025 <br>00:30 SGT" in page and "Singapore" in page
-    assert "2 saved mail candidates" in client.get("/?month=2025-03").text
+    assert client.get("/?month=2025-03").status_code == 200
+    march = service.saved_range(calendar_month("2025-03"))[0]
+    assert len(march) == 2
+    assert {
+        c.gmail_internal_at.astimezone(SINGAPORE).strftime("%d %b %Y %H:%M") for c in march.values()
+    } >= {"01 Mar 2025 00:30"}
 
 
 def test_zero_value_purchase_month_has_nonzero_chart_scale_and_agreeing_totals():
@@ -356,13 +358,6 @@ def test_persistent_message_failure_does_not_block_later_pages_and_has_targeted_
     candidates, state = load(service)
     assert set(candidates) == {"a", "c"} and state["exhausted"]
     assert state["pages"] == 2 and state["duplicates"] == 1
-    client = TestClient(create_app(path, gmail_service=service), base_url="http://127.0.0.1:8877")
-    page = client.get("/gmail?month=2025-02").text
-    assert (
-        "Gmail search ended" in page and "1 unresolved messages" in page and 'value="retry"' in page
-    )
-    assert "invalid_message" in page and "coverage is incomplete" in page
-    assert "1 unresolved messages" in client.get("/?month=2025-02").text
     calls = len(fake.calls)
     candidates, state = load(service, action="retry")
     assert fake.calls[calls:] == [("get", "bad")]
@@ -385,11 +380,6 @@ def test_persistent_message_failure_does_not_block_later_pages_and_has_targeted_
     candidates, state = load(service, action="retry")
     assert set(candidates) == {"a", "bad", "c"} and state["failed"] == {}
     assert (state["pages"], state["duplicates"]) == (2, 1)
-    page = TestClient(
-        create_app(path, gmail_service=service), base_url="http://127.0.0.1:8877"
-    ).get("/gmail?month=2025-02")
-    assert "0 unresolved messages" in page.text
-    assert "not complete financial coverage" in page.text
     calls = len(fake.calls)
     load(service)
     assert len(fake.calls) == calls
@@ -434,9 +424,6 @@ def test_bounded_failed_retries_rotate_persisted_order_without_starvation(tmp_pa
     assert len(state["failed"]) == 100 and identities[-1] not in state["failed"]
     assert state["seen"] == [identities[-1]]
     assert (state["pages"], state["duplicates"], state["exhausted"]) == (6, 0, True)
-    client = TestClient(create_app(path, gmail_service=service), base_url="http://127.0.0.1:8877")
-    page = client.get("/gmail?month=2025-02").text
-    assert "100 unresolved messages" in page and "coverage is incomplete" in page
     assert fake.calls[calls:].count(("get", identities[-1])) == 1
     assert all(kind == "get" for kind, _ in fake.calls[calls:])
     assert other.saved_range(calendar_month("2025-02")) == other_before
@@ -605,7 +592,7 @@ def test_actual_gets_are_offline_and_chart_tables_exactly_agree_with_monthly_row
     response = client.get("/?month=2025-02")
     data = TableData(response.text)
     assert len(data.rows) == 15
-    assert "Gmail retrieval for this period is incomplete" in response.text
+    assert "Press Refresh" in response.text
     assert "Saved ledger facts only, not a complete bank statement" in response.text
     assert "1 undated" in response.text
     for currency in ("SGD", "JPY", "KWD", "USD"):
@@ -629,12 +616,9 @@ def test_actual_gets_are_offline_and_chart_tables_exactly_agree_with_monthly_row
         "connection_id": service.connection_id,
     }
     response = client.post("/gmail/month", data=fields)
-    assert response.status_code == 200 and "Gmail search ended" in response.text
-    assert "0 results" in client.get("/saved?month=2025-02").text
-    assert "Gmail search ended" in client.get("/?month=2025-02").text
-    assert 'href="/gmail?month=2025-02"' in client.get("/?month=2025-02").text
-    other_month = client.get("/gmail?month=2025-03").text
-    assert "Not loaded" in other_month and "Gmail search ended" not in other_month
+    assert response.status_code == 200
+    assert service.saved_range(calendar_month("2025-02"))[1]["exhausted"]
+    assert not service.saved_range(calendar_month("2025-03"))[1]["started"]
     assert (
         client.post(
             "/gmail/month", data=fields, headers={"Origin": "https://evil.invalid"}

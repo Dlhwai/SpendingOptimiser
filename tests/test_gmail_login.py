@@ -25,6 +25,7 @@ from spending_optimiser.gmail_auth import (
 )
 from spending_optimiser.gmail_service import GmailService
 from spending_optimiser.monthly import calendar_month
+from spending_optimiser.processing import REVISION
 from spending_optimiser.web import create_app
 
 CLIENT_ID = "synthetic.apps.googleusercontent.com"
@@ -254,15 +255,14 @@ def test_oauth_real_library_flow_load_refresh_and_ledger_preserved(setup):
     assert challenge.decode().rstrip("=") == params["code_challenge"][0]
     assert exchanged["redirect_uri"] == CALLBACK
     assert len(env.google.calls) == 1 and env.google.calls[0].endswith("/profile")
-    response = load(env)
-    assert "2 saved candidates" in response.text and "2 duplicate IDs skipped" in response.text
-    inbox = env.client.get("/saved?month=2025-02").text
-    assert "Unsupported" in inbox and "Excluded from totals" in inbox
-    assert "&lt;script&gt;" in inbox and "<script>" not in inbox
-    assert "<img src=x>" not in inbox
+    load(env)
+    state = env.service.saved_range(MONTH)[1]
+    assert len(saved(env.service)) == 2 and state["duplicates"] == 2
+    outcomes = env.service.cache.outcomes(env.service.namespace, REVISION)
+    assert {o["outcome"] for o in outcomes.values()} == {"unsupported"}
     identities = [c.observation.observation_id for c in saved(env.service).values()]
-    response = load(env)
-    assert "2 saved candidates" in response.text and "Gmail search ended" in response.text
+    load(env)
+    assert len(saved(env.service)) == 2 and env.service.saved_range(MONTH)[1]["exhausted"]
     assert identities == [c.observation.observation_id for c in saved(env.service).values()]
     env.service.connection.credentials.expiry = datetime.now(UTC).replace(tzinfo=None) - timedelta(
         days=1
@@ -442,31 +442,32 @@ def test_zero_partial_errors_limits_cycles_and_safe_html(setup):
     env = setup
     connect(env)
     env.google.pages = {None: {}}
-    assert "0 saved candidates" in load(env).text
+    load(env)
+    assert not saved(env.service) and env.service.saved_range(MONTH)[1]["exhausted"]
     env.google.pages = {None: {"messages": [{"id": "mail1"}, {"id": "mail2"}]}}
     env.google.message_error = "mail2"
-    response = load(env)
-    assert (
-        "1 saved candidates" in response.text
-        and "Partial / failed retrieval: message_not_found" in response.text
-    )
+    load(env)
+    assert len(saved(env.service)) == 1
+    assert env.service.saved_range(MONTH)[1]["errors"] == ["message_not_found"]
     env.google.message_error = None
     env.google.html = True
     env.google.body = (
         '<p>Untrusted mail</p><img src="https://tracking.invalid/x"><script>execute()</script>'
     )
     load(env)
-    inbox = env.client.get("/saved?month=2025-02").text
+    inbox = " ".join(c.text for c in saved(env.service).values())
     assert "Untrusted mail" in inbox and "tracking.invalid" not in inbox
     assert "execute()" not in inbox
     env.google.pages = {None: {"messages": [{"id": "mail1"}], "nextPageToken": "more"}}
-    assert "More mail to load" in load(env, pages="1").text
+    load(env, pages="1")
+    assert not env.service.saved_range(MONTH)[1]["exhausted"]
     env.google.pages = {
         None: {"nextPageToken": "a"},
         "a": {"nextPageToken": "b"},
         "b": {"nextPageToken": "a"},
     }
-    assert "pagination_cycle" in load(env, pages="5").text
+    load(env, pages="5")
+    assert "pagination_cycle" in env.service.saved_range(MONTH)[1]["errors"][0]
     env.google.pages = {
         None: {"nextPageToken": "a"},
         "a": {"nextPageToken": "b"},
@@ -475,11 +476,13 @@ def test_zero_partial_errors_limits_cycles_and_safe_html(setup):
         "d": {"nextPageToken": "e"},
     }
     before = len(env.google.calls)
-    assert "More mail to load" in load(env, pages="5").text
+    load(env, pages="5")
+    assert not env.service.saved_range(MONTH)[1]["exhausted"]
     assert len(env.google.calls) - before == 5
     for code in ("rate_limited", "permission_denied", "transport_failed", "api_error"):
         env.google.error = code
-        assert code in load(env).text
+        load(env)
+        assert code in env.service.saved_range(MONTH)[1]["errors"]
     env.google.error = "authentication_failed"
     assert "Reconnect Gmail" in load(env).text and not saved(env.service)
 
