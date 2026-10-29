@@ -17,10 +17,10 @@ from pydantic import Field
 
 from .common import CURRENCY_EXPONENTS, EvidenceRef, Fact, Model
 from .extraction import ACCOUNT_REFERENCE, EVENT_KINDS, MAX_NOTIFICATION_CHARS, _parse_value
-from .notification_profiles import PROFILE_ROLES, PROFILE_RULES, qualify
+from .notification_profiles import PROFILE_CLAIM, PROFILE_ROLES, PROFILE_RULES, qualify
 
 VERSION = "local-structural-v1"
-LEARNING_REVISION = "local-learning-v3"
+LEARNING_REVISION = "local-learning-v4"
 DISCOVERY_REVISION = "template-discovery-" + LEARNING_REVISION
 MAX_PARTS = 8
 MAX_TOTAL_CHARS = 65536
@@ -49,9 +49,15 @@ KINDS = {
     "paynow transfer": "transfer",
 }
 NUMBER = r"(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,19})(?:\.[0-9]{1,3})?"
+MONEY_END = r"(?=[.;:!?]?(?:\s|$))"
 MONEY = re.compile(
     rf"(?<![\w.+-])(?P<currency>{'|'.join(CURRENCY_EXPONENTS)}|S\$)\s*"
-    rf"(?P<number>{NUMBER})(?![\w,]|\.[0-9])"
+    rf"(?P<number>[+-]?[0-9]\S*?){MONEY_END}"
+)
+ASSERTION_START = re.compile(
+    r"(?im)^[^\S\n]*(?P<assertion>"
+    r"(?:your\s+purchase|you\s+(?:have\s+)?made\s+a\s+purchase)\s+(?:of|for)|"
+    r"your\s+(?:refund|(?:PayNow\s+)?transfer)\s+(?:of|for)\b)"
 )
 DATE = (
     r"(?:[0-9]{4}[-/][0-9]{2}[-/][0-9]{2}|"
@@ -154,9 +160,8 @@ RAW_RULES = (
         "amount_assertion",
         "amount",
         re.compile(
-            r"(?im)^[ \t]*an\s+amount\s+of\s+"
-            rf"(?P<value>(?:[A-Z]{{3}}|S\$)\s*{NUMBER})(?![0-9,]|\.[0-9])"
-            r"\s+was\s+(?:debited|credited)\b"
+            r"(?im)^[ \t]*an\s+amount\s+of\b\s*"
+            r"(?P<value>(?:\S+(?:\s+\S+)*?)?)\s+was\s+(?:debited|credited)\b"
         ),
     ),
     (
@@ -165,7 +170,7 @@ RAW_RULES = (
         re.compile(
             r"(?im)^[ \t]*(?:your\s+purchase|you\s+(?:have\s+)?made\s+a\s+purchase)"
             r"\s+(?:of|for)\s*"
-            rf"(?P<value>(?:[A-Z]{{3}}|S\$)\s*{NUMBER})(?![0-9,]|\.[0-9])"
+            rf"(?P<value>(?:[A-Z]{{3}}|S\$)\s*{NUMBER}){MONEY_END}"
         ),
     ),
     (
@@ -173,7 +178,7 @@ RAW_RULES = (
         "refund",
         re.compile(
             r"(?im)^[ \t]*your\s+refund\s+(?:of|for)\s+"
-            rf"(?P<value>(?:[A-Z]{{3}}|S\$)\s*{NUMBER})(?![0-9,]|\.[0-9])"
+            rf"(?P<value>(?:[A-Z]{{3}}|S\$)\s*{NUMBER}){MONEY_END}"
         ),
     ),
     (
@@ -181,7 +186,7 @@ RAW_RULES = (
         "transfer",
         re.compile(
             r"(?im)^[ \t]*your\s+(?:PayNow\s+)?transfer\s+(?:of|for)\s+"
-            rf"(?P<value>(?:[A-Z]{{3}}|S\$)\s*{NUMBER})(?![0-9,]|\.[0-9])"
+            rf"(?P<value>(?:[A-Z]{{3}}|S\$)\s*{NUMBER}){MONEY_END}"
         ),
     ),
     ("event_on", "occurred_on", re.compile(rf"(?i)\bon\s+(?P<value>{DATE})(?![A-Za-z0-9])")),
@@ -406,7 +411,7 @@ def _value(role, raw):
         return KINDS[key]
     if role == "amount":
         match = MONEY.fullmatch(raw)
-        if match is None:
+        if match is None or re.fullmatch(NUMBER, match["number"]) is None:
             raise ValueError
         code = "SGD" if match["currency"] == "S$" else match["currency"]
         return _parse_value("amount", f"Amount: {code} {match['number'].replace(',', '')}")
@@ -468,6 +473,7 @@ def analyze(candidate):
         return Analysis(issues=("unsupported_message_structure",))
     bindings, shapes, parts, issues = [], [], [], []
     financial = False
+    profile_context = any(PROFILE_CLAIM.search(part.text) for part in candidate.parts)
     for part in candidate.parts:
         text = part.text
         if any(ord(c) < 32 and c not in "\n\t" for c in text):
@@ -519,7 +525,14 @@ def analyze(candidate):
         label_starts = {b.start for b in found if b.grammar.endswith("_label")}
         if any(m.start("label") not in label_starts for m in FIELD_LABEL.finditer(text)):
             issues.append("invalid_explicit_field")
-        found, profile_issues = qualify(found, text, candidate.subject, candidate.observation)
+        assertion_starts = {b.start for b in found if b.grammar.endswith("_assertion")}
+        if any(
+            m.start("assertion") not in assertion_starts for m in ASSERTION_START.finditer(text)
+        ):
+            issues.append("invalid_financial_assertion")
+        found, profile_issues = qualify(
+            found, text, candidate.subject, candidate.observation, profile_context
+        )
         issues.extend(profile_issues)
         found.sort(key=lambda b: (b.start, b.end, b.grammar))
         if not found:
@@ -781,16 +794,10 @@ def facts_from(analysis, digest, observation):
     reference = facts["account"]
     if facts["bank"].status == "conflicting":
         issues.append("bank_conflicting")
-    if reference.alternatives and any(
-        re.search(r"(?i)(?:[*x•]{2,}|ending|\bcard\b)", value) for value in reference.alternatives
-    ):
-        facts["account"] = Fact(
-            evidence=reference.evidence, note="Conflicting incomplete account attribution"
-        )
-        issues.append("account_attribution_unresolved")
-    if reference.value is not None:
-        value = reference.value
-        numeric = re.fullmatch(r"[0-9][0-9 -]*", value) is not None
+    values = (() if reference.value is None else (reference.value,)) + reference.alternatives
+    resolved, refs = [], reference.evidence
+    for value in values:
+        numeric = re.fullmatch(r"[0-9][0-9 ._-]*", value) is not None
         symbolic = (
             not numeric
             and ACCOUNT_REFERENCE.fullmatch(value) is not None
@@ -805,15 +812,16 @@ def facts_from(analysis, digest, observation):
         if masked or not (symbolic or complete):
             facts["account"] = Fact(
                 evidence=reference.evidence,
-                note="Masked/card identifiers do not establish complete account attribution",
+                note="Identifiers do not establish complete account attribution",
             )
             issues.append("account_attribution_unresolved")
-        elif complete:
-            facts["account"] = Fact(
-                status="proposed",
-                value=facts["bank"].value + ":" + value,
-                evidence=reference.evidence + facts["bank"].evidence,
-            )
+            break
+        resolved.append(facts["bank"].value + ":" + value if complete else value)
+        if complete:
+            refs = reference.evidence + facts["bank"].evidence
+    else:
+        if resolved:
+            facts["account"] = _fact(resolved, refs)
     kind = facts["kind"]
     if kind.value and kind.value not in EVENT_KINDS:
         return {}, "non_transaction", ("non_financial_notification",)

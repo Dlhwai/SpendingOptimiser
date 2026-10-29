@@ -8,8 +8,9 @@ from datetime import date
 
 import pytest
 from test_local_templates import candidate, definitions
-from test_processing import load, setup, total
+from test_processing import BODY, Notifications, load, setup, total
 
+from spending_optimiser.gmail import GmailAdapter
 from spending_optimiser.ledger import heads
 from spending_optimiser.local_templates import LocalTemplates
 from spending_optimiser.processing import REVISION, extract
@@ -115,6 +116,146 @@ def test_completed_profiles_reconcile_all_explicit_currency_evidence(tmp_path, b
         transaction = heads(document)[0]
         assert transaction.review.status == "pending"
         assert total(document, kind=kind) == 0 and transaction.review.reason
+
+
+INVALID_CONTRACT_FIELDS = [
+    ("From", "DBS/POSB card ending 12345"),
+    ("From", "PayLah! Wallet (Mobile ending 12345)"),
+    ("From", "unsupported source"),
+    ("From", ""),
+    ("Date & Time", "x" * 129),
+    ("Date & Time", ""),
+    ("To", "x" * 129),
+    ("To", ""),
+    ("Transaction Ref", "unsupported/reference"),
+    ("Transaction Ref", "x" * 129),
+    ("Transaction Ref", ""),
+]
+
+
+@pytest.mark.parametrize("body", [CARD, WALLET.replace("03 Feb 09:15", "03 Feb 2025 09:15")])
+@pytest.mark.parametrize("label, value", INVALID_CONTRACT_FIELDS)
+def test_every_profile_contract_field_participates_in_completeness(body, label, value):
+    fake = Notifications({"one": body})
+    adapter = GmailAdapter(fake, "synthetic-contract-review")
+    control = adapter.get_candidate("one").candidate
+    assert extract(control, "valid-contract", control.observation)[2] == "accepted"
+    fake.bodies["one"] = body + f"\n{label}: {value}"
+    saved = adapter.get_candidate("one").candidate
+    _, _, outcome, reasons = extract(saved, "invalid-contract", saved.observation)
+    assert outcome == "uncertain" and "invalid_notification_contract" in reasons
+
+
+@pytest.mark.parametrize(
+    "claim_text",
+    [
+        "card transaction request dated unknown",
+        "card transaction request dated 03/02/25e2",
+        "card transaction request dated 2025-02-03",
+        "card transaction request dated",
+        "PayLah! Scan & Pay Transfer dated unknown",
+        "PayLah! Scan & Pay Transfer dated 03 February 2025",
+        "PayLah! Scan & Pay Transfer dated",
+    ],
+)
+@pytest.mark.parametrize("body", [CARD, WALLET.replace("03 Feb 09:15", "03 Feb 2025 09:15"), BODY])
+def test_unsupported_date_claims_cannot_hide_beside_valid_financial_facts(body, claim_text):
+    fake = Notifications({"one": body})
+    adapter = GmailAdapter(fake, "synthetic-claim-review")
+    control = adapter.get_candidate("one").candidate
+    assert extract(control, "valid-claim-control", control.observation)[2] == "accepted"
+    fake.bodies["one"] = (
+        body
+        + "\nWe refer to your "
+        + claim_text
+        + ". We are pleased to confirm that the transaction was completed."
+    )
+    saved = adapter.get_candidate("one").candidate
+    _, _, outcome, reasons = extract(saved, "invalid-claim", saved.observation)
+    assert outcome == "uncertain" and "invalid_notification_contract" in reasons
+
+
+@pytest.mark.parametrize(
+    "body, competing_source, kind",
+    [
+        (CARD, "PayLah! Wallet (Mobile ending 8888)", "purchase"),
+        (
+            WALLET.replace("03 Feb 09:15", "03 Feb 2025 09:15"),
+            "DBS/POSB card ending 9999",
+            "transfer",
+        ),
+    ],
+)
+def test_profile_source_types_cannot_bypass_single_source_attribution(
+    tmp_path, body, competing_source, kind
+):
+    service, fake, _ = setup(tmp_path, {"one": body})
+    original = load(service)
+    assert heads(original)[0].review.status == "accepted"
+    fake.bodies["one"] = body + "\nFrom: " + competing_source
+    document = load(service, "refresh")
+    assert heads(document)[0].review.status == "pending" and total(document, kind=kind) == 0
+    assert "incomplete_notification_contract" in heads(document)[0].review.reason
+    assert document.transactions[0] == original.transactions[0]
+
+
+@pytest.mark.parametrize(
+    "body, kind",
+    [(CARD, "purchase"), (WALLET.replace("03 Feb 09:15", "03 Feb 2025 09:15"), "transfer")],
+)
+@pytest.mark.parametrize("only_field", [False, True])
+def test_profile_completeness_checks_every_mime_representation(tmp_path, body, kind, only_field):
+    import base64
+    from html import escape
+
+    service, fake, client = setup(tmp_path, {"one": body})
+    original_message = fake.get_message
+    alternative = body
+
+    def with_alternative(identity):
+        message = original_message(identity)
+        raw = "".join(f"<p>{escape(line)}</p>" for line in alternative.splitlines()).encode()
+        message["payload"] = {
+            "mimeType": "multipart/alternative",
+            "parts": [
+                message["payload"],
+                {
+                    "mimeType": "text/html",
+                    "body": {"size": len(raw), "data": base64.urlsafe_b64encode(raw).decode()},
+                },
+            ],
+        }
+        return message
+
+    fake.get_message = with_alternative
+    original = load(service)
+    assert heads(original)[0].review.status == "accepted"
+    alternative = ("" if only_field else body) + "\nFrom: unsupported source"
+    document = load(service, "refresh")
+    transaction = heads(document)[0]
+    assert transaction.review.status == "pending" and total(document, kind=kind) == 0
+    assert "invalid_notification_contract" in transaction.review.reason
+    assert document.transactions[0] == original.transactions[0]
+    assert "Excluded from totals" in client.get("/saved?month=2025-02").text
+    saved = candidate(service, fake)
+    parts = {part.locator: part for part in saved.parts}
+    for fact in (transaction.amount, transaction.occurred_on, transaction.account_id):
+        for ref in fact.evidence:
+            _, _, locator, _, start, end = ref.locator.split(":")
+            assert parts[locator].text[int(start) : int(end)] == ref.quote
+    assert load(service, "refresh") == document
+
+
+def test_profile_completeness_does_not_reclassify_ordinary_transport_metadata(tmp_path):
+    body = BODY + (
+        "\nFrom: ordinary@example.invalid\nTo: recipient@example.invalid"
+        "\nDate & Time: unsupported transport date\nTransaction Ref: unsupported/reference"
+    )
+    service, _, _ = setup(tmp_path, {"one": body})
+    document = load(service)
+    transaction = heads(document)[0]
+    assert transaction.review.status == "accepted" and total(document) == 1234
+    assert transaction.direction.value is transaction.card_id.value is None
 
 
 def test_known_date_order_requires_corresponding_financial_day_month(tmp_path):

@@ -552,6 +552,172 @@ def test_separated_numeric_accounts_require_explicit_institution(tmp_path, refer
     assert total(document, currency="USD" if narrative else "SGD") == (1925 if narrative else 1234)
 
 
+@pytest.mark.parametrize(
+    "reference",
+    ["1234.5678.9012", "1234_5678_9012", "1234.5678_9012", "1234/5678/9012"],
+)
+@pytest.mark.parametrize("narrative", [False, True])
+@pytest.mark.parametrize("bank", [False, True])
+def test_unsupported_numeric_formats_never_create_canonical_accounts(
+    tmp_path, reference, narrative, bank
+):
+    control = NARRATIVE if narrative else BODY
+    service, fake, _ = setup(tmp_path, {"one": control})
+    original = load(service)
+    assert heads(original)[0].review.status == "accepted"
+    fake.bodies["one"] = control.replace("travel-wallet" if narrative else "wallet-blue", reference)
+    if bank:
+        fake.bodies["one"] += "\nBank: Fictional Bank"
+    document = load(service, "refresh")
+    transaction = heads(document)[0]
+    assert transaction.review.status == "pending"
+    assert transaction.account_id.value is None and not transaction.account_id.alternatives
+    assert document.accounts == original.accounts
+    assert total(document, currency="USD" if narrative else "SGD") == 0
+    assert document.transactions[0] == original.transactions[0]
+
+
+@pytest.mark.parametrize("reference", ["1234.5678.9012", "1234_5678_9012"])
+@pytest.mark.parametrize("other", ["wallet-green", "1234 5678 9012"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_account_alternatives_cannot_map_unsupported_numeric_identities(
+    tmp_path, reference, other, reverse
+):
+    references = [reference, other] if not reverse else [other, reference]
+    body = BODY.replace(
+        "Account: wallet-blue", "\n".join("Account: " + value for value in references)
+    )
+    service, _, _ = setup(tmp_path, {"one": body + "\nBank: Fictional Bank"})
+    document = load(service)
+    transaction = heads(document)[0]
+    assert transaction.review.status == "pending"
+    assert transaction.account_id.value is None and not transaction.account_id.alternatives
+    assert not document.accounts and total(document) == 0
+
+
+ASSERTIONS = [
+    ("Your purchase of", "", "purchase"),
+    ("You made a purchase for", "", "purchase"),
+    ("You have made a purchase of", "", "purchase"),
+    ("Your refund of", "", "refund"),
+    ("Your transfer for", "", "transfer"),
+    ("Your PayNow transfer of", "", "transfer"),
+    ("An amount of", " was debited", "purchase"),
+    ("An amount of", " was credited", "purchase"),
+]
+MALFORMED_MAGNITUDES = [
+    "19.25e2",
+    "19.25E+2",
+    "19.25-",
+    "19.25+",
+    "19.25.6",
+    "19,25",
+    "-19.25",
+    "+19.25",
+    "19.25/2",
+    "19.25_suffix",
+]
+
+
+@pytest.mark.parametrize("prefix, verb, kind", ASSERTIONS)
+@pytest.mark.parametrize("magnitude", MALFORMED_MAGNITUDES)
+def test_financial_assertions_validate_whole_unsigned_amounts(prefix, verb, kind, magnitude):
+    control = f"{prefix} USD 19.25{verb} on 3 February 2025 using account reference travel.wallet."
+    if verb:
+        control = "Purchase confirmation\n" + control
+    fake = Notifications({"one": control})
+    adapter = GmailAdapter(fake, "synthetic-assertion-review")
+    saved = adapter.get_candidate("one").candidate
+    facts, _, outcome, reasons = extract(saved, "valid-assertion", saved.observation)
+    assert outcome == "accepted" and not reasons
+    assert facts["amount"].value.minor_units == 1925 and facts["kind"].value == kind
+    invalid = control.replace("19.25", magnitude)
+    for body in (invalid, BODY + "\n" + invalid):
+        fake.bodies["one"] = body
+        saved = adapter.get_candidate("one").candidate
+        facts, _, outcome, reasons = extract(saved, "invalid-assertion", saved.observation)
+        assert outcome != "accepted" and reasons
+        assert (
+            not facts or facts["amount"].value is None or facts["amount"].value.minor_units == 1234
+        )
+
+
+@pytest.mark.parametrize("verb", ["debited", "credited"])
+@pytest.mark.parametrize("value", ["XYZ -99.00", "$-99.00", "USD\n-99.00", "nonsense", ""])
+def test_unsupported_competing_debit_credit_assertions_cannot_disappear(verb, value):
+    fake = Notifications({"one": BODY + f"\nAn amount of {value} was {verb}."})
+    saved = GmailAdapter(fake, "synthetic-debit-review").get_candidate("one").candidate
+    facts, _, outcome, reasons = extract(saved, "invalid-debit", saved.observation)
+    assert outcome == "uncertain" and "invalid_explicit_field" in reasons
+    assert facts["amount"].value.minor_units == 1234
+
+
+def test_unspaced_purchase_assertion_cannot_hide_an_unsupported_amount():
+    fake = Notifications({"one": NARRATIVE.replace("of USD", "ofUSD")})
+    adapter = GmailAdapter(fake, "synthetic-unspaced-review")
+    control = adapter.get_candidate("one").candidate
+    assert extract(control, "valid-unspaced", control.observation)[2] == "accepted"
+    fake.bodies["one"] = BODY + "\n" + NARRATIVE.replace("of USD 19.25", "ofXYZ -99.00")
+    saved = adapter.get_candidate("one").candidate
+    assert extract(saved, "invalid-unspaced", saved.observation)[2] == "uncertain"
+
+
+@pytest.mark.parametrize(
+    "body, invalid, currency",
+    [
+        (NARRATIVE, NARRATIVE.replace("19.25", "19.25e2"), "USD"),
+        (NARRATIVE, NARRATIVE.replace("19.25", "19.25-"), "USD"),
+        (BODY, BODY + "\nAn amount of XYZ\n-99.00 was credited.", "SGD"),
+    ],
+)
+def test_invalid_assertions_invalidate_totals_without_losing_source_history(
+    tmp_path, body, invalid, currency
+):
+    service, fake, client = setup(tmp_path, {"one": body})
+    original = load(service)
+    assert heads(original)[0].review.status == "accepted"
+    fake.bodies["one"] = invalid
+    document = load(service, "refresh")
+    assert heads(document)[0].review.status == "pending" and total(document, currency=currency) == 0
+    assert document.transactions[0] == original.transactions[0]
+    assert "Excluded from totals" in client.get("/saved?month=2025-02").text
+    assert load(service, "refresh") == document
+
+
+@pytest.mark.parametrize("magnitude", MALFORMED_MAGNITUDES)
+def test_monetary_scanner_retains_unsupported_competing_magnitudes(magnitude):
+    fake = Notifications({"one": BODY + "\nAvailable balance: USD " + magnitude})
+    saved = GmailAdapter(fake, "synthetic-money-review").get_candidate("one").candidate
+    facts, _, outcome, reasons = extract(saved, "invalid-magnitude", saved.observation)
+    assert outcome == "uncertain" and "unbound_monetary_value" in reasons
+    assert facts["amount"].value.minor_units == 1234
+
+
+@pytest.mark.parametrize("punctuation", ["", ".", ";", ":", "!", "?"])
+@pytest.mark.parametrize(
+    "money, code, minor",
+    [("USD 1,234.56", "USD", 123456), ("JPY 19", "JPY", 19), ("KWD 19.250", "KWD", 19250)],
+)
+def test_valid_narrative_money_precision_boundaries_and_spans(punctuation, money, code, minor):
+    body = (
+        f"Your purchase of {money}{punctuation} on 3 February 2025 "
+        "using account reference travel.wallet."
+    )
+    saved = (
+        GmailAdapter(Notifications({"one": body}), "synthetic-money-control")
+        .get_candidate("one")
+        .candidate
+    )
+    facts, _, outcome, reasons = extract(saved, "valid-money", saved.observation)
+    assert outcome == "accepted" and not reasons
+    assert facts["amount"].value.currency == code and facts["amount"].value.minor_units == minor
+    assert facts["direction"].value is facts["posted_on"].value is None
+    for fact in facts.values():
+        for ref in fact.evidence:
+            start, end = map(int, ref.locator.rsplit(":", 2)[1:])
+            assert saved.parts[0].text[start:end] == ref.quote
+
+
 @pytest.mark.parametrize("kind", ["purchase", "refund", "transfer", "debit"])
 def test_complete_narrative_references_keep_distinct_processing_identities(tmp_path, kind):
     body = NARRATIVE.replace("Your purchase", "Your " + kind)

@@ -10,6 +10,13 @@ from dataclasses import replace
 from datetime import date, timedelta, timezone
 
 COMPLETE = r"\.\s*We\s+are\s+pleased\s+to\s+confirm\s+that\s+the\s+transaction\s+was\s+completed\."
+PROFILE_CLAIM = re.compile(
+    r"(?i)We\s+refer\s+to\s+your\s+(?:card\s+transaction\s+request|"
+    r"PayLah!\s+Scan\s*&\s*Pay\s+Transfer)\s+dated\b"
+)
+PROFILE_FIELD = re.compile(
+    r"(?im)^[^\S\n]*(?P<field>From|Date\s*&\s*Time|To|Transaction\s+Ref)\s*:"
+)
 PROFILE_RULES = (
     (
         "completed_card_dmy2",
@@ -85,13 +92,19 @@ NON_PURCHASE = re.compile(
 )
 
 
-def qualify(bindings, text, subject, observation):
+def qualify(bindings, text, subject, observation, profile_context):
     """Recheck the complete contract within EACH inline representation."""
 
     def one(role):
         selected = [b for b in bindings if b.role == role]
         return selected[0] if len(selected) == 1 else None
 
+    if profile_context:
+        starts = {b.start for b in bindings if b.role in PROFILE_ROLES}
+        if any(m.start("field") not in starts for m in PROFILE_FIELD.finditer(text)) or any(
+            m.start() not in starts for m in PROFILE_CLAIM.finditer(text)
+        ):
+            return bindings, ("invalid_notification_contract",)
     claims = [b for b in bindings if b.role in {"card_claim_date", "wallet_claim_date"}]
     if not claims:
         return bindings, ()
@@ -104,7 +117,10 @@ def qualify(bindings, text, subject, observation):
     card = claim.role == "card_claim_date"
     source = one("card_from" if card else "wallet_from")
     clock, payee, reference = one("notice_clock"), one("payee"), one("notice_reference")
-    if not all((source, clock, payee, reference)):
+    if (
+        not all((source, clock, payee, reference))
+        or len([b for b in bindings if b.role in {"card_from", "wallet_from"}]) != 1
+    ):
         return bindings, ("incomplete_notification_contract",)
     if card and (
         NON_PURCHASE.search((subject or "") + "\n" + text)
