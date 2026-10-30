@@ -1,8 +1,7 @@
 {% extends 'base.html' %}
 {% from 'components.html' import inspect_tabs %}
-{% set step = 2 %}
 {% block title %}Card evidence{% endblock %}
-{% block content %}<div class="page-head"><div><p class="eyebrow">Step 2 of 3</p><h1>Card evidence</h1></div><span class="badge">Stored data only</span></div>
+{% block content %}<div class="page-head"><div><p class="eyebrow">Records</p><h1>Card evidence</h1></div><span class="badge">Stored data only</span></div>
 {{ inspect_tabs('evidence') }}
 <p class="warning">Reference data only: not an activated or verified rule catalog.</p>
 {% for name, records in public.items() %}<section class="card"><div class="section-heading"><h2>{{ name|capitalize }}</h2><span class="badge">{{ records|length }} records</span></div>{% for record in records %}<details class="source-record"><summary>{{ record.get('name') or record.get('title') or record.get('revision_id') or record.get('product_id') or 'Stored record' }}</summary><pre>{{ record|tojson(indent=2) }}</pre></details>{% else %}<p class="muted small">0 results.</p>{% endfor %}</section>{% endfor %}{% endblock %}

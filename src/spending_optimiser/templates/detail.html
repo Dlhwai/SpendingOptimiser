@@ -1,9 +1,8 @@
 {% extends 'base.html' %}
 {% from 'components.html' import inspect_tabs %}
-{% set step = 2 %}
 {% block title %}Event {{ transaction.event_id }}{% endblock %}
 {% block content %}
-<div class="page-head"><div><p class="eyebrow">Step 2 of 3</p><h1 class="text-wrap">{{ transaction.merchant.value or transaction.event_id }}</h1><p class="muted text-wrap">Event {{ transaction.event_id }} · {{ history|length }} revision{{ '' if history|length == 1 else 's' }} preserved</p></div><a class="button" href="#review-event">Review this event</a></div>
+<div class="page-head"><div><p class="eyebrow">Records</p><h1 class="text-wrap">{{ transaction.merchant.value or transaction.event_id }}</h1><p class="muted text-wrap">Event {{ transaction.event_id }} · {{ history|length }} revision{{ '' if history|length == 1 else 's' }} preserved</p></div><a class="button" href="#review-event">Review this event</a></div>
 {{ inspect_tabs('transactions') }}
 <div class="detail-summary"><span class="badge {{ transaction.review.status }}">{{ transaction.review.status }}</span>{% if transaction.amount.value %}<strong class="amount">{{ transaction.amount.value.currency }} {{ transaction.amount.value.minor_units }} minor units</strong>{% endif %}<span class="muted small">{{ transaction.kind.value or transaction.kind.status }} · {{ transaction.occurred_on.value or transaction.occurred_on.status }}</span></div>
 <p class="muted small text-wrap">Current revision <code>{{ transaction.revision_id }}</code>{% if transaction.duplicate_of %} · Duplicate of {{ transaction.duplicate_of }}{% endif %}</p>

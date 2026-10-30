@@ -16,24 +16,7 @@
 {% endmacro %}
 {% macro inspect_tabs(current, period=none) %}
 {% set q = '?' ~ period.params|urlencode if period else '' %}
-{{ tabs('Saved data', [('mail', '/saved' ~ q, 'Saved mail'), ('transactions', '/ledger' ~ q, 'Transactions'), ('evidence', '/public', 'Card evidence')], current) }}
-{% endmacro %}
-{% macro unreadable_notice(candidates, period) %}
-{% set unreadable = candidates.values()|select('none')|list|length %}
-{% if unreadable %}<p class="error-note" role="alert">{{ unreadable }} saved messages unreadable or identity-invalid in this period or with unknown receipt dates. Payloads are preserved; valid mail remains available. <a href="/gmail?{{ period.params|urlencode }}">Continue saved processing in step 1</a>; use a known-good backup for source recovery.</p>{% endif %}
-{% endmacro %}
-{% macro processing_summary(outcomes, processing_pending, gmail, period, template_pending=0) %}
-{% set included_messages = outcomes.values()|selectattr('included')|list %}
-{% set included = outcomes.values()|map(attribute='events')|sum(start=[])|selectattr('included')|map(attribute='event_id')|unique(case_sensitive=true)|list|length %}
-{% set previous = outcomes.values()|selectattr('prior_version')|map(attribute='events')|sum(start=[])|selectattr('included')|map(attribute='event_id')|unique(case_sensitive=true)|list|length %}
-<p class="notice" role="status">{{ included }} accepted transactions from this saved mail · {{ outcomes|length - included_messages|length }} other / uncertain messages. {% if previous %}{{ previous }} previous canonical revisions remain included while their current source versions await processing. {% endif %}<a href="/saved?{{ period.params|urlencode }}">Inspect outcomes</a></p>
-{% if processing_pending %}<p class="warning">{{ processing_pending }} saved messages awaiting processing across this account. Continue processes up to 100 without refetching saved mail.</p>{% endif %}
-{% if template_pending %}<p class="warning">{{ template_pending }} saved versions awaiting local template discovery. Continue also learns from older evidence, without adding old versions as transactions.</p>{% endif %}
-{% if gmail.processing_error %}<p class="error-note" role="alert">Mail remains saved. Local transaction processing failed for some entries; retry Load / Continue. Earlier ledger revisions are preserved.</p>{% endif %}
-{% endmacro %}
-{% macro processing_outcome(outcome) %}
-<p class="notice" role="status">Current source: {{ outcome.outcome|capitalize }}{% if outcome.reasons %} · {{ outcome.reasons|join(', ')|replace('_', ' ') }}{% endif %}</p>
-{% for event in outcome.events %}<p class="notice" role="status">{{ 'Previous canonical revision' if outcome.prior_version else 'Canonical revision' }}: {{ event.status }} · {{ 'Included when its event date matches the viewing period' if event.included else 'Excluded from totals' }} · <a href="/transaction?event_id={{ event.event_id|urlencode }}">Transaction, evidence &amp; corrections: {{ event.event_id }}</a></p>{% else %}<p class="warning">Excluded from totals: no associated canonical events.</p>{% endfor %}
+{{ tabs('Saved data', [('transactions', '/ledger' ~ q, 'Transactions'), ('evidence', '/public', 'Card evidence')], current) }}
 {% endmacro %}
 {% macro overview_tabs(current, period=none) %}
 {% set q = '?' ~ period.params|urlencode if period else '' %}

@@ -1043,14 +1043,17 @@ section[id] {
 .page-head .period-shortcuts { justify-content: flex-end; }
 .period-shortcuts a[aria-current] { color: var(--green-dark); font-weight: 650; text-decoration: none; }
 .period-links { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: -8px 0 20px; }
-.kind-totals {
+.kind-totals,
+.spending-totals {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 14px;
   margin: 20px 0;
 }
-.kind-totals dt { color: var(--muted); font-size: 12px; }
-.kind-totals dd { margin: 6px 0 0; font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.kind-totals dt,
+.spending-totals dt { color: var(--muted); font-size: 12px; }
+.kind-totals dd,
+.spending-totals dd { margin: 6px 0 0; font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; margin-top: 28px; }
 .month-chart { margin: 0; min-width: 0; }
 .month-chart figcaption { font-weight: 650; font-size: 17px; }
@@ -1394,4 +1397,24 @@ form > input + button, form > select + button { margin-top: 14px; }
       background-color 0.12s,
       color 0.12s;
   }
+}
+
+.spending-totals { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 4px; }
+.refresh-panel .section-heading { align-items: flex-start; }
+.refresh-panel .section-heading p { margin: 6px 0 0; }
+.card-list { display: grid; gap: 12px; margin-bottom: 24px; }
+.card-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.4fr) auto;
+  gap: 16px;
+  align-items: end;
+  padding: 16px 22px;
+  margin: 0;
+}
+.card-row .badge { margin-left: 10px; }
+.card-row .form-field { margin: 0; }
+@media (max-width: 760px) {
+  .card-row { grid-template-columns: minmax(0, 1fr); }
+  .card-row button { justify-self: stretch; }
+  .spending-totals { grid-template-columns: minmax(0, 1fr); }
 }

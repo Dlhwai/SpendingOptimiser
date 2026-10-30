@@ -1,10 +1,10 @@
 # Automatic local transactions and learned email templates
 
-Explicit **Load period**, **Continue period**, **Refresh period** and **Retry failed
-messages** save Gmail messages first, then derive reusable templates from saved
-emails, apply them locally and validate source-linked financial facts. Unambiguous
-supported transactions are accepted without an import or review click. Uncertain,
-conflicting, unsupported and nonfinancial messages remain inspectable and excluded.
+An explicit **Refresh** saves Gmail messages first, then derives reusable templates from
+saved emails, applies them locally and validates source-linked financial facts.
+Unambiguous supported transactions are accepted without an import or review click.
+Uncertain, conflicting, unsupported and nonfinancial messages stay saved and excluded,
+and are reachable as evidence from a transaction's detail page.
 The application's processing never sends email, private intermediate templates or
 financial records to AI.
 
@@ -108,18 +108,17 @@ remain unsupported. Accepted facts stay `proposed`, not `verified`.
 
 ## Ordinary trigger and continuation
 
-After an explicit valid load action, the app discovers up to **100 previously
-undiscovered saved versions**, including historical versions, then processes up to
-**100 current saved messages** from that account. A current candidate is also
-learned on demand if it was not reached by the historical discovery batch. Both
-bounds are local work, separate from the chosen 1-5 Gmail pages. Historical
-versions teach structure but never create another transaction or override a decision.
+During an explicit Refresh the app repeats batches of up to **100 previously
+undiscovered saved versions**, including historical versions, then up to **100 current
+saved messages** from that account, until nothing is pending or one batch fails (at
+most 30 rounds per Refresh). A current candidate is also learned on demand if it was
+not reached by the historical discovery batch. Historical versions teach structure but
+never create another transaction or override a decision.
 
-This local backlog is account-wide and independent of the selected receipt period.
-Step 1 and Saved mail show remaining discovery/processing counts. **Continue saved
-processing** uses the same form after Gmail search ends, without refetching mail.
-No new import/template-preparation/review step is required. Nothing learns or
-processes on GET/page viewing, startup, sign-in, restore-connection, timers or idle
+This local backlog is account-wide and independent of the days loaded. Refresh finishes
+it without refetching mail; if it stops early the status says so and the next Refresh
+continues. No new import/template-preparation/review step is required. Nothing learns
+or processes on GET/page viewing, startup, sign-in, restore-connection, timers or idle
 background jobs. Opening a page reads progress only.
 
 Mail and per-message financial commits are separate. Parsing/write failures preserve
@@ -154,9 +153,9 @@ reconciled into one bank transaction; explicit duplicate links or rejection rema
 available in the existing ledger model.
 
 A failed/deferred changed source may leave an older accepted head counted until a
-successful update. Saved mail distinguishes **current source processing** from
-**previous canonical inclusion**, and links every associated event. It does not claim
-the newer version was applied or label the still-counted head excluded.
+successful update. The stored outcome of each message distinguishes **current source processing** from
+**previous canonical inclusion** (the stored `mail_processing` and ledger heads), so a
+newer version is never claimed to be applied while the older head still counts.
 
 Receipt periods use Singapore boundaries; totals use date-only financial Event date.
 Only latest accepted, resolved, nonduplicate records enter the same exact tables and
@@ -208,3 +207,23 @@ Existing chart previews preseed financial fixtures and are not extraction proof.
 Protected corpus qualification is separate developer verification with fixed aggregate
 output and a query-only consistent backup, never a live deployment. Private verification
 inputs and sample-specific findings are not public fixtures or validation-agent evidence.
+
+## Cards, wallets and transfers
+
+A completed-payment notice whose `From:` line states a card ("DBS/POSB card ending
+NNNN") records one **card reference** per mailbox, issuer and ending, once however many
+alerts repeat it. A `From:` line naming a wallet ("PayLah! Wallet (Mobile ending
+NNNN)") records a **wallet reference**. Only card references are offered on
+**Cards**; a wallet, mobile number, account reference or masked suffix from any other
+format is never a card choice, and a full card number is never requested.
+
+The transaction still keeps its source account reference as before. The product you
+choose is stored beside the ledger, never inferred, and never rewrites a fact or
+accepts an uncertain transaction. See [rewards](rewards.md).
+
+A transfer from a wallet whose direction is explicitly outflow is recorded as a
+transfer with `direction: outflow`. It counts once as spending, apart from card
+purchases, unless the transfer purpose is marked as between your own accounts or a card
+repayment. It has no card and earns no card reward. A year absent from the notice is
+never taken from the email's receipt date, so such a notice stays uncertain and
+excluded, exactly as before.

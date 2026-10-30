@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
-<title>{% block title %}Understand this month{% endblock %} | SpendingOptimiser</title>
+<title>{% block title %}Optimise spending{% endblock %} | SpendingOptimiser</title>
 <style>{% include 'styles.css' %}</style>
 </head>
 <body>
@@ -13,8 +13,8 @@
 <a class="brand" href="/" aria-label="SpendingOptimiser home"><span class="brand-mark" aria-hidden="true">s<span>o</span></span><span>Spending<span class="brand-light">Optimiser</span></span></a>
 <nav aria-label="Steps">
 {% set suffix = '?' ~ period.params|urlencode if period is defined and period and (request.query_params.get('month') or request.query_params.get('start')) else '' %}
-{% for number, path, label in [(1, '/gmail', 'Connect Gmail'), (2, '/saved', 'Inspect saved data'), (3, '/', 'Understand this month')] %}
-<a href="{{ path }}{{ suffix }}" {% if step|default(0) == number %}aria-current="page"{% endif %}><span class="nav-icon" aria-hidden="true">{{ number }}</span>{{ label }}</a>
+{% for number, path, label in [(1, '/gmail', 'Connect Gmail'), (2, '/cards', 'Cards'), (3, '/', 'Optimise spending')] %}
+<a href="{{ path }}{{ suffix if number == 3 else '' }}" {% if step|default(0) == number %}aria-current="page"{% endif %}><span class="nav-icon" aria-hidden="true">{{ number }}</span>{{ label }}</a>
 {% endfor %}
 </nav>
 </aside>

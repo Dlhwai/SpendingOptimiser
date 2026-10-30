@@ -1,7 +1,7 @@
 # Safe, subscription-backed desktop AI
 
 This follow-up adds a separate **Safe AI analysis** page (a tab of step 3,
-**Understand this month**). Ordinary Gmail loading,
+**Optimise spending**). Ordinary Gmail loading,
 transaction lookups and financial calculations do not invoke a model. The default
 app is disconnected and needs no AI client. For saved-data charts, see the
 [deterministic monthly workflow](monthly.md).

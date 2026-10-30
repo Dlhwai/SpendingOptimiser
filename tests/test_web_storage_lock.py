@@ -36,7 +36,7 @@ def synthetic_dependencies_only(monkeypatch):
         ("GET", "/ai/proposal?id={proposal}", False),
         ("GET", "/?month=2025-02", False),
         ("GET", "/ledger?month=2025-02", False),
-        ("GET", "/saved?start=2025-01-31&end=2025-03-01", False),
+        ("GET", "/cards", False),
         ("GET", "/?start=2025-02-10&end=2025-02-10", False),
         ("GET", "/review", False),
         ("GET", "/transaction?event_id=test-purchase", False),

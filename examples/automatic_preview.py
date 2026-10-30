@@ -1,7 +1,7 @@
 """Synthetic automatic processing proof: empty ledger, fictional notification transport.
 
 All narrative/HTML fixtures below are fictional, not copied from any bank or private mail.
-Only Load/Continue/Refresh/Retry creates ledger facts. No real provider/model/sign-in.
+Only an explicit Refresh creates ledger facts. No real provider/model/sign-in.
 """
 
 import argparse
@@ -138,7 +138,7 @@ def main():
         parser.error("Use a separate unused loopback port from 1024-65535, never 8765")
     with tempfile.TemporaryDirectory(prefix="spending-auto-synthetic-") as directory:
         app = automatic_app(directory, profiles=args.profiles)
-        print(f"Synthetic only: http://127.0.0.1:{args.port}/gmail?month=2025-02", flush=True)
+        print(f"Synthetic only: http://127.0.0.1:{args.port}/gmail", flush=True)
         uvicorn.run(app, host="127.0.0.1", port=args.port, access_log=False, proxy_headers=False)
 
 

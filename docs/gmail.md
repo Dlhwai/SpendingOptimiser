@@ -234,8 +234,8 @@ Unlike Google's quickstart example, this app does **not** write `token.json`.
 uv run --locked spending-optimiser
 ```
 
-The sidebar has three steps: **1 Connect Gmail**, **2 Inspect saved data** and
-**3 Understand this month**. Nothing signs in at startup or when a page is opened.
+The sidebar has three steps: **1 Connect Gmail**, **2 Cards** and
+**3 Optimise spending**. Nothing signs in at startup or when a page is opened.
 
 1. Open **http://127.0.0.1:8765** and choose **Connect Gmail**. With a custom
    `--port`, use that port consistently; do not substitute `localhost` for sign-in.
@@ -252,44 +252,50 @@ The sidebar has three steps: **1 Connect Gmail**, **2 Inspect saved data** and
    Gmail account identity. OpenID supplies a verified stable Google `sub`, so email
    address changes do not merge identities. A namespace hashes that `sub`; message
    identities also include the Gmail message ID, never the thread or financial amount.
-4. Choose a **period** with the From and To dates (inclusive, Singapore time): one day,
-   a calendar month or any range up to three calendar months, or use the **This
-   month**, **Last month** and **Last 3 months** links. The exact limit and the
-   `?month=` and `?start=&end=` links are in [monthly.md](monthly.md#choosing-a-period).
-   Then choose **Load period**. **Pages per action** is 1-5 (default 2, 20 IDs/page).
-   The fixed query uses explicit epoch boundaries for the Singapore-time midnights that
-   open and close the period (UTC+08:00), excluding spam/trash; a local half-open
-   Singapore receipt-time filter enforces the exact period. Duplicates count toward
-   the action bound. **Continue period** resumes until the query is genuinely
-   exhausted, including successful empty nonterminal pages. Partial failures retain
-   successes and retry the same unadvanced page with resolved IDs skipped. A proven
-   per-message failure (`invalid_message` or `response_too_large`) is retained as an
-   unresolved ID so later pages still load; **Retry failed messages** re-fetches only
-   those IDs. Listing, network, rate-limit and auth failures never advance. Errors,
-   cycles and unresolved messages stay incomplete, never empty or complete success.
-   **Gmail search ended** means no further search results, not complete financial coverage.
-   **Refresh period** restarts an expired/cycled token. No automatic retries,
-   whole-mailbox scans, scheduler or background polling exist.
-   Progress is stored per Google account and exact period. A scan covers only the
-   period it loaded: a month loaded earlier never marks a day or range inside or
-   around it as loaded. A form for another account, or a period that is invalid,
-   reversed, over three months or missing, is refused before any Gmail request.
-5. **Inspect saved data** lists the period's candidates with sender, subject and Gmail
-   receipt time. Expand a row to view the complete subject, unverified headers and
-   escaped normalized text. HTML is never executed, images never loaded, URLs never
-   followed and embedded instructions never acted upon. Display is capped at 10,000
-   characters per candidate with a size notice. For source-processing outcomes and
-   bounded local continuation after a load, see
-   [automatic transactions](automatic-transactions.md#ordinary-trigger-and-continuation).
-   Optional accepted AI layouts remain
-   [unsaved diagnostic proposals](subscription-ai.md#what-is-supported).
-6. **Refresh period** restarts this period's query with bounded pages, retaining
-   saved candidates and deduplicating by stable account/message identity. Changed
-   content versions are preserved. Continue until exhausted again; previous
-   exhaustion is not current after refresh starts. Absent/deleted provider mail
-   is not erased from saved data. This is not a snapshot or financial completeness
-   guarantee. The last query-action time, completed-page/duplicate counts and
-   unresolved messages are visible. Retries do not inflate these counts.
+4. Press **Refresh**. It is the one routine mail action: it loads mail and then
+   processes everything saved, with short feedback while it runs and when it ends.
+   - **Which days.** For each connected account, from the day of its latest saved email
+     (the Singapore day the mail was received, not a transaction's financial date)
+     through today, both inclusive. An account with no saved email loads the current
+     Singapore month. After a Refresh that finishes, the next one starts from that day,
+     so the same day is looked at again and mail that arrived later is found.
+   - **No clamping.** A gap longer than three calendar months is covered by consecutive
+     subranges of at most three calendar months each, newest first. The three-month
+     limit applies to the overview's period picker, not to this loading.
+   - **Bounded.** One Refresh makes at most 25 Gmail listing pages (20 IDs each) and
+     processes saved mail in bounded batches. If that is not enough it says
+     **More are waiting: press Refresh** and the next press continues at the page it
+     stopped on. Already-saved IDs are never fetched again.
+   - **Resumable and safe.** Newest-first pages are saved as they arrive, but the
+     start day is only moved forward after the whole interval finished. A newest
+     message that was saved by an interrupted Refresh is not proof that older pages
+     were loaded. A message Gmail cannot return (`invalid_message` or `response_too_large`)
+     is recorded and not fetched again; it does not hold the start day back, and later
+     Refreshes keep reporting **N emails could not be loaded from Gmail** until it is
+     saved. Listing, network, rate-limit and auth failures never advance anything and
+     are reported with what to do next.
+   - **Truthful.** Feedback is composed from the stored facts when the page is shown, so
+     unloaded mail, unprocessed mail and an old refresh date are each reported and none
+     hides another. **All recent emails are loaded** appears only when the interval
+     really finished today and every saved message was processed. Mail that was fetched but
+     cannot qualify as a transaction is saved and counts as loaded; mail that was never
+     fetched does not. The wording does not claim complete financial or reward
+     coverage, which Gmail search cannot establish.
+   Progress is stored per Google account. A form for another account is refused before
+   any Gmail request. The query uses explicit epoch boundaries for the Singapore
+   midnights that open and close each subrange (UTC+08:00), excluding spam/trash, and
+   a local half-open Singapore receipt-time filter enforces the exact interval. No
+   automatic retries, whole-mailbox scans, scheduler or background polling exist.
+5. **Cards** lists the card endings your notifications state, such as
+   **DBS/POSB card ending NNNN**, each pending until you choose which card it is; see
+   [rewards](rewards.md). Saved mail itself has no inspection page: original messages
+   are still preserved in the local database and are shown as source evidence on a
+   transaction's detail page. HTML is never executed, images never loaded, URLs never
+   followed and embedded instructions never acted upon. Optional accepted AI layouts
+   remain [unsaved diagnostic proposals](subscription-ai.md#what-is-supported).
+6. Absent/deleted provider mail is not erased from saved data. Changed content
+   versions are preserved. A Refresh is not a snapshot or financial completeness
+   guarantee. The time of the last Refresh is shown under the status.
 7. **Disconnect Gmail** hides saved mail and Gmail-derived ledger/source views, cancels pending sign-ins and removes this
    ledger's saved authorization from `.env`. It is idempotent. If `.env` cannot be
    updated, the UI is disconnected but reports the failure and the saved credential

@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+{% set step = 2 %}
+{% block title %}Cards{% endblock %}
+{% block content %}
+<div class="page-head"><div><p class="eyebrow">Step 2 of 3</p><h1>Cards</h1></div>{% if cards %}<span class="badge {{ 'pending' if cards|length > choices|length else 'accepted' }}">{{ choices|length }} of {{ cards|length }} chosen</span>{% endif %}</div>
+{% if not gmail.connection %}<div class="card empty"><span class="empty-icon" aria-hidden="true">@</span><h3>Connect Gmail to see cards.</h3><div class="actions"><a class="button" href="/gmail">Connect Gmail</a></div></div>
+{% elif not cards %}<div class="card empty"><span class="empty-icon" aria-hidden="true">▭</span><h3>No cards found yet.</h3><p>0 results.</p><div class="actions"><a class="button secondary" href="/gmail">Refresh emails</a></div></div>
+{% else %}
+<section class="card-list" aria-label="Cards">{% for account_id, card in cards.items() %}
+<form class="card card-row" action="/cards/choose" method="post" data-card="{{ account_id }}"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="connection_id" value="{{ gmail.connection_id }}"><input type="hidden" name="account_id" value="{{ account_id }}">
+<div><strong>{{ card.label }}</strong>{% if account_id in choices %}<span class="badge accepted">Chosen</span>{% else %}<span class="badge pending">Pending</span>{% endif %}</div>
+<div class="form-field"><label for="product-{{ loop.index }}">Card</label><select id="product-{{ loop.index }}" name="product_id" required>{% if account_id not in choices %}<option value="" selected disabled>Choose card</option>{% endif %}{% for product_id, name in options.items() %}<option value="{{ product_id }}" {{ 'selected' if choices.get(account_id) == product_id else '' }}>{{ name }}</option>{% endfor %}</select></div>
+<button class="secondary">Save</button></form>{% endfor %}</section>
+{% endif %}
+<details class="disclosure"><summary>Records &amp; recovery</summary><p><a href="/ledger">Transactions</a> · <a href="/public">Card evidence</a> · <a href="/imports">Import data</a> · <a href="/storage">Storage</a></p></details>
+{% endblock %}

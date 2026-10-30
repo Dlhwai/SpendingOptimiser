@@ -8,7 +8,6 @@ from collections import Counter
 from datetime import datetime, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi.testclient import TestClient
@@ -117,12 +116,8 @@ def test_coverage_belongs_to_the_exact_period_that_was_loaded(tmp_path):
     assert set(candidates) == {"early"}  # saved mail is not hidden
     assert not state["started"] and not state["exhausted"]  # but nothing claims it was scanned
     client = web(path, service)
-    assert "Not loaded" in client.get("/gmail?start=2025-02-01&end=2025-02-10").text
-    saved = client.get("/saved?start=2025-02-01&end=2025-02-10").text
-    assert "Period incomplete or not loaded" in saved and "Saved candidates: 1" in saved
-    assert "Gmail search ended" in client.get("/gmail?month=2025-02").text
     around = client.get("/?start=2025-01-15&end=2025-03-14").text
-    assert "Gmail retrieval for this period is incomplete or not started" in around
+    assert "Press Refresh" in around
     # Two exhausted neighbouring months still do not make a range across them loaded.
     load(service, calendar_month("2025-01"))
     spanning = date_range("2025-01-15", "2025-02-14")
@@ -174,12 +169,9 @@ def test_a_period_and_its_equal_calendar_month_share_one_stored_scan(tmp_path):
     fake.pages = {None: {"messages": [{"id": "a"}]}}
     load(service, calendar_month("2025-02"))
     client = web(path, service)
-    for query in ("month=2025-02", "start=2025-02-01&end=2025-02-28"):
-        page = client.get(f"/gmail?{query}").text
-        assert "Gmail search ended" in page and "February 2025" in page
     fields = {"connection_id": service.connection_id, "pages": "1", "action": "continue"}
     response = post(client, "/gmail/month", start="2025-02-01", end="2025-02-28", **fields)
-    assert response.status_code == 303 and response.headers["location"] == "/gmail?month=2025-02"
+    assert response.status_code == 303 and response.headers["location"] == "/gmail"
     assert [call for call in fake.calls if call[0] == "list"] == [fake.calls[0]]  # no new loading
     assert set(scans(service)) == {"2025-02"}
 
@@ -210,7 +202,7 @@ def test_historical_mail_without_month_metadata_is_found_by_any_period_that_hold
         "start=&end=",
     ],
 )
-@pytest.mark.parametrize("path", ["/", "/gmail", "/saved", "/ledger", "/storage"])
+@pytest.mark.parametrize("path", ["/", "/ledger", "/storage"])
 def test_invalid_reversed_or_over_limit_views_are_rejected_by_the_server(tmp_path, path, query):
     service, fake = connected(tmp_path / "invalid.sqlite3")
     client = web(tmp_path / "invalid.sqlite3", service)
@@ -249,21 +241,11 @@ def test_a_valid_range_posts_loads_and_redirects_to_the_same_range(tmp_path):
     period = date_range("2025-02-20", "2025-03-05")
     fields = {"connection_id": service.connection_id, "pages": "1", "action": "continue"}
     response = post(client, "/gmail/month", start="2025-02-20", end="2025-03-05", **fields)
-    assert response.status_code == 303
-    assert parse_qs(urlparse(response.headers["location"]).query) == {
-        "start": ["2025-02-20"],
-        "end": ["2025-03-05"],
-    }
+    assert response.status_code == 303 and response.headers["location"] == "/gmail"
     assert fake.calls[0][1]["query"] == period.query
-    page = client.get(response.headers["location"]).text
-    assert "20 Feb - 5 Mar 2025" in page and "Gmail search ended" in page
-    form = Fields(page).find("form", action="/gmail/month")
-    assert form
-    hidden = {a["name"]: a["value"] for a in Fields(page).find("input", type="hidden")}
-    assert (hidden["start"], hidden["end"]) == (
-        "2025-02-20",
-        "2025-03-05",
-    ) and "month" not in hidden
+    assert service.saved_range(period)[1]["exhausted"]
+    page = client.get("/gmail").text
+    assert not Fields(page).find("form", action="/gmail/month")  # no developer load form
     # A stale form from before an account switch loads nothing.
     calls = len(fake.calls)
     post(
@@ -274,9 +256,6 @@ def test_a_valid_range_posts_loads_and_redirects_to_the_same_range(tmp_path):
         end="2025-03-05",
     )
     assert len(fake.calls) == calls
-    assert not Fields(client.get("/gmail?month=2025-02").text).find(
-        "input", name="start", type="hidden"
-    )
 
 
 def test_page_views_of_any_period_read_saved_data_only(tmp_path, monkeypatch):
@@ -290,7 +269,7 @@ def test_page_views_of_any_period_read_saved_data_only(tmp_path, monkeypatch):
         "start=2025-01-31&end=2025-03-01",
         "start=2025-02-14&end=2025-02-14",
     ):
-        for path in ("/", "/gmail", "/saved", "/ledger", "/storage"):
+        for path in ("/", "/gmail", "/cards", "/ledger", "/storage"):
             assert client.get(f"{path}?{query}").status_code == 200
     assert (versions(service), scans(service), storage.ledger.load()) == before
     assert len(fake.calls) == calls
@@ -375,32 +354,31 @@ def test_overview_and_transactions_show_the_selected_range_with_exact_tables(tmp
     assert "0 results" in client.get("/?start=2025-06-01&end=2025-06-03").text
     layout = Fields(text)
     hrefs = {a["href"] for t, a in layout.tags if t == "a" and "href" in a}
-    assert {
-        "/gmail?start=2025-01-31&end=2025-03-01",
-        "/saved?start=2025-01-31&end=2025-03-01",
-    } <= hrefs
-    assert "Understand this month" in text  # the step name itself is unchanged
+    assert {"/gmail", "/cards", "/?start=2025-01-31&end=2025-03-01"} <= hrefs
+    assert "Optimise spending" in text
     assert fake.calls == []
 
 
 def test_the_picker_offers_dates_up_to_three_months_and_a_current_month_shortcut(tmp_path):
     service, _ = connected(tmp_path / "picker.sqlite3")
     client = web(tmp_path / "picker.sqlite3", service)
-    page = Fields(client.get("/gmail?start=2025-01-31&end=2025-03-01").text)
+    page = Fields(client.get("/?start=2025-01-31&end=2025-03-01").text)
     (start,) = page.find("input", name="start", type="date")
     (end,) = page.find("input", name="end", type="date")
     assert (start["value"], end["value"]) == ("2025-01-31", "2025-03-01")
     assert end["min"] == "2025-01-31" and end["max"] == "2025-04-29" and "required" in end
     assert start["min"] == "1970-01-01" and start["max"] == "9998-12-31"
-    links = {a["href"] for t, a in page.tags if t == "a" and "/gmail?" in a.get("href", "")}
+    links = {a["href"] for t, a in page.tags if t == "a" and a.get("href", "").startswith("/?")}
     for _, preset in shortcuts():
-        assert f"/gmail?{'&'.join(f'{k}={v}' for k, v in preset.params.items())}" in links
-    marked = Fields(client.get("/gmail?month=" + shortcuts()[0][1].key).text)
-    current = [a["href"] for t, a in marked.tags if t == "a" and a.get("aria-current") == "true"]
-    assert current == ["/gmail?month=" + shortcuts()[0][1].key]
-    unfiltered = Fields(client.get("/ledger").text)
-    assert not [a for t, a in unfiltered.tags if t == "a" and a.get("aria-current") == "true"]
-    assert "All saved records" in client.get("/ledger?month=2025-02").text
+        assert f"/?{'&'.join(f'{k}={v}' for k, v in preset.params.items())}" in links
+    marked = Fields(client.get("/?month=" + shortcuts()[0][1].key).text)
+    current = [
+        a["href"]
+        for t, a in marked.tags
+        if t == "a" and a.get("aria-current") == "true" and a["href"].startswith("/?")
+    ]
+    assert current == ["/?month=" + shortcuts()[0][1].key]
+    assert not Fields(client.get("/gmail").text).find("input", name="start")  # no period to pick
 
 
 def test_storage_policy_ignores_the_selected_period_and_compresses_automatically(
@@ -433,8 +411,7 @@ def test_storage_policy_ignores_the_selected_period_and_compresses_automatically
     )
     assert response.status_code == 303
     assert storage.status()["mail_archived"] == 2
-    page = client.get("/saved?start=2025-02-01&end=2025-03-10").text
-    assert "2 older mail versions are compressed" in page and "Saved candidates: 2" in page
+    assert "2 compressed mail versions" in client.get("/storage").text
     stored = service.saved_range(date_range("2025-02-01", "2025-03-10"))[0]
     assert {c.text for c in stored.values()} == {fake.body.strip()}  # readable while cold
     ledger = storage.ledger.load()

@@ -94,6 +94,21 @@ class DateRange:
         return self.start <= instant.astimezone(SINGAPORE).date() < self.end
 
 
+def split_range(first, last):
+    """Consecutive DateRanges, none over three calendar months, that cover first..last inclusive.
+
+    Chunks are anchored on `first`, so the same start always yields the same boundaries.
+    """
+    if last < first:
+        raise ValueError("The end date cannot be before the start date")
+    chunks, cursor = [], first
+    while cursor <= last:
+        end = min(add_months(cursor, MAX_MONTHS), last + timedelta(days=1))
+        chunks.append(DateRange(cursor, end))
+        cursor = end
+    return chunks
+
+
 def calendar_month(value=None):
     value = datetime.now(SINGAPORE).strftime("%Y-%m") if value is None else value
     if not re.fullmatch(r"[0-9]{4}-[0-9]{2}", value):
@@ -170,12 +185,17 @@ def format_money(currency, minor_units):
     return f"{currency} {sign}{number}"
 
 
-def grouping(document, transaction):
-    """Use explicit IDs, not labels as identity or guesses from email/card products."""
+def grouping(document, transaction, sources=None):
+    """Use explicit IDs, not labels as identity or guesses from email/card products.
+
+    `sources` maps a source account ID to the card or wallet it was explicitly stated as.
+    """
     t = transaction
     accounts = {a.account_id: a for a in document.accounts}
     card = t.card_id.value
     account = t.account_id.value
+    if sources and account in sources and not card:
+        return (card, account, t.channel.value), sources[account]
     channel = t.channel.value
     # Long opaque IDs remain exact grouping keys; full values are on record detail.
     account_label = (
@@ -221,13 +241,23 @@ def foreign_events(document, namespace):
     }
 
 
-def range_report(document, period, hidden=frozenset()):
-    """Never net unsigned event kinds into cashflow. Charts show purchases only."""
+def outgoing_transfer(t):
+    """An explicit outflow wallet/account transfer, which is spending but not a card purchase."""
+    return (
+        t.kind.value == "transfer"
+        and t.direction.value == "outflow"
+        and t.transfer_purpose.value not in {"own_accounts", "card_repayment"}
+    )
+
+
+def range_report(document, period, hidden=frozenset(), sources=None):
+    """Never net unsigned event kinds into cashflow. Charts show purchases and transfers out."""
     rows, undated = [], []
     counts = Counter()
     excluded = Counter()
     totals = defaultdict(int)
     groups = defaultdict(int)
+    transfers = defaultdict(int)
     daily = defaultdict(int)
     labels = {}
     for t in heads(document):
@@ -240,7 +270,7 @@ def range_report(document, period, hidden=frozenset()):
         if not period.start <= day < period.end:
             continue
         counts[t.review.status] += 1
-        group, label = grouping(document, t)
+        group, label = grouping(document, t, sources)
         labels[group] = label
         reason = exclusion(t)
         if reason:
@@ -251,6 +281,8 @@ def range_report(document, period, hidden=frozenset()):
             if t.kind.value == "purchase":
                 groups[money.currency, group] += money.minor_units
                 daily[money.currency, day] += money.minor_units
+            elif outgoing_transfer(t):
+                transfers[money.currency, group] += money.minor_units
         rows.append({"transaction": t, "group": label, "exclusion": reason})
     currencies = sorted({currency for currency, _ in totals})
     charts = []
@@ -261,6 +293,14 @@ def range_report(document, period, hidden=frozenset()):
             if code == currency
         ]
         by_group.sort(key=lambda item: (-item["minor_units"], item["label"]))
+        by_transfer = [
+            {"label": labels[group], "minor_units": amount}
+            for (code, group), amount in transfers.items()
+            if code == currency
+        ]
+        by_transfer.sort(key=lambda item: (-item["minor_units"], item["label"]))
+        purchases = sum(item["minor_units"] for item in by_group)
+        sent = sum(item["minor_units"] for item in by_transfer)
         timeline = [
             {"label": day.isoformat(), "minor_units": amount}
             for (code, day), amount in sorted(daily.items())
@@ -270,8 +310,11 @@ def range_report(document, period, hidden=frozenset()):
             {
                 "currency": currency,
                 "groups": by_group,
+                "transfers": by_transfer,
+                "spending": {"purchase": purchases, "transfer": sent, "total": purchases + sent},
                 "daily": timeline,
                 "maximum_group": max((r["minor_units"] for r in by_group), default=0) or 1,
+                "maximum_transfer": max((r["minor_units"] for r in by_transfer), default=0) or 1,
                 "maximum_day": max((r["minor_units"] for r in timeline), default=0) or 1,
                 "totals": {
                     kind: totals[currency, kind]
