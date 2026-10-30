@@ -276,6 +276,42 @@ def test_an_unloadable_message_is_reported_without_holding_back_later_mail(tmp_p
     # The failure record itself is kept.
 
 
+def test_an_unloadable_message_and_unprocessed_mail_are_both_reported(tmp_path, monkeypatch):
+    path = tmp_path / "both.sqlite3"
+    fake = WindowedMail({"bad": ms(2025, 3, 20, 7)})
+    fake.fail_get = {"bad"}
+    service = service_for(path, fake)
+    assert refresh(service)["outcome"] == "failed"
+    # Next day: new mail is saved but processing fails.
+    fake.mailbox["buy"] = ms(2025, 3, 21, 9)
+    fake.bodies["buy"] = PURCHASE.format(amount="21.40", day="2025-03-21")
+    monkeypatch.setattr(gmail_service, "process_saved", lambda cache, namespace: 1)
+    state = refresh(service, date(2025, 3, 21))
+    assert state["outcome"] == "processing" and state["failed"] == 1
+    assert "buy" in service.saved_range(date_range("2025-03-21", "2025-03-21"))[0]
+    view = service_for(path, fake, today=date(2025, 3, 21)).refresh_view()
+    assert view["alert"] and "could not be processed" in view["message"]
+    assert "1 emails could not be loaded from Gmail" in view["message"]
+    assert "All recent emails are loaded" not in view["message"]
+    # Saved mail still waiting to be processed is reported with the gap too.
+    monkeypatch.undo()
+    monkeypatch.setattr(gmail_service, "PROCESS_ROUNDS", 0)
+    state = refresh(service_for(path, fake, today=date(2025, 3, 21)))
+    assert state["outcome"] == "processing" and state["failed"] == 1
+    assert "1 emails could not be loaded" in service.refresh_view()["message"]
+    # Once processing succeeds, only the download gap remains.
+    monkeypatch.setattr(gmail_service, "PROCESS_ROUNDS", 30)
+    service = service_for(path, fake, today=date(2025, 3, 22))
+    state = refresh(service)
+    assert (
+        state["outcome"] == "failed"
+        and service.cache.pending_count(service.namespace, REVISION) == 0
+    )
+    assert service.refresh_view()["message"] == (
+        "1 emails could not be loaded from Gmail. All other recent emails are loaded."
+    )
+
+
 def test_an_interrupted_refresh_resumes_its_page_after_the_day_changes(tmp_path, monkeypatch):
     path = tmp_path / "large.sqlite3"
     mailbox = {f"m{i:02}": ms(2025, 3, 1 + i % 18, 8, i) for i in range(30)}
@@ -435,6 +471,7 @@ def test_processing_failure_is_reported_not_called_complete(tmp_path, monkeypatc
     assert state["outcome"] == "processing" and state["through"] == "2025-03-20"
     view = service.refresh_view()
     assert view["alert"] and "could not be processed" in view["message"]
+    assert "could not be loaded" not in view["message"]
 
 
 def test_a_stale_completion_is_not_presented_as_current(tmp_path):

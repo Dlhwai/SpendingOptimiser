@@ -51,7 +51,9 @@ def rule(**overrides):
     return {**base, **overrides}
 
 
-def purchase(number, day, minor, kind="purchase", merchant=None, mcc=None, account=CARD):
+def purchase(
+    number, day, minor, kind="purchase", merchant=None, mcc=None, account=CARD, currency="SGD"
+):
     event = f"event-{number}"
     transaction = {
         "event_id": event,
@@ -66,7 +68,7 @@ def purchase(number, day, minor, kind="purchase", merchant=None, mcc=None, accou
             }
         ],
         "kind": fact(kind),
-        "amount": fact({"currency": "SGD", "minor_units": minor}),
+        "amount": fact({"currency": currency, "minor_units": minor}),
         "occurred_on": fact(day),
         "account_id": fact(account),
         "review": {
@@ -308,7 +310,8 @@ def test_rounding_terms_are_applied_per_transaction():
 def test_other_currencies_and_outside_dates_never_borrow_a_rate():
     usd = rule(earning=fact([rate(currency="USD")]))
     result = rewards(document([usd], [purchase(1, FEB[0], 2550)]))
-    assert result.status == "estimated" and result.earned == {}
+    assert result.status == "unsupported" and result.earned == {}
+    assert result.reason == "Terms incomplete: no rate for SGD purchases"
     late = rule(effective=fact({"start": "2025-03-01", "end": "2026-01-01"}))
     assert rewards(document([late], [purchase(1, FEB[0], 2550)])).status == "unsupported"
     open_ended = rule(effective=fact({"start": "2025-01-01"}))
@@ -387,3 +390,98 @@ def test_an_unrepresentable_calculation_is_reported_not_raised():
     doc = document([rule(rounding=rounding)], [purchase(1, FEB[0], 2550)])
     result = rewards(doc)
     assert result.status == "unsupported" and "out of range" in result.reason
+
+
+def currency_only(*codes):
+    return {
+        "status": "proposed",
+        "value": [
+            {
+                "dimension": "currency",
+                "operator": "in",
+                "operands": list(codes),
+                "description": "Listed currencies",
+            }
+        ],
+    }
+
+
+def test_a_purchase_in_another_currency_than_the_rate_is_unknown_not_zero():
+    doc = document([rule()], [purchase(1, FEB[0], 2550, currency="USD")])
+    result = rewards(doc)
+    assert result.status == "unsupported" and result.earned == {}
+    assert result.reason == "Terms incomplete: no rate for USD purchases"
+
+
+def test_a_mixed_currency_card_is_not_given_a_partial_total():
+    doc = document([rule()], [purchase(1, FEB[0], 2550), purchase(2, FEB[1], 1000, currency="USD")])
+    result = rewards(doc)
+    assert result.status == "unsupported" and result.earned == {}
+    assert result.spend == {"SGD": 2550, "USD": 1000}
+
+
+def test_a_same_currency_rate_is_used_when_other_currency_rates_exist():
+    terms = rule(earning=fact([rate("sgd"), rate("usd", points="3", currency="USD")]))
+    doc = document([terms], [purchase(1, FEB[0], 2550), purchase(2, FEB[1], 1000, currency="USD")])
+    assert rewards(doc).earned == {"example points": Decimal("81")}
+
+
+def test_explicitly_ineligible_currencies_may_earn_nothing():
+    transactions = [purchase(1, FEB[0], 2550), purchase(2, FEB[1], 1000, currency="USD")]
+    by_rule = rewards(document([rule(eligibility=currency_only("SGD"))], transactions))
+    assert by_rule.status == "estimated" and by_rule.earned == {"example points": Decimal("51")}
+    by_rate = rule(earning=fact([rate(eligibility=currency_only("SGD"))]))
+    result = rewards(document([by_rate], transactions))
+    assert result.status == "estimated" and result.earned == {"example points": Decimal("51")}
+
+
+def test_an_undecided_purchase_outside_the_viewed_days_matters_only_through_caps():
+    transactions = [purchase(1, FEB[0], 2550, currency="USD"), purchase(2, FEB[2], 1000)]
+    week = date_range("2025-02-17", "2025-02-17")
+    result = rewards(document([rule()], transactions), period=week)
+    assert result.status == "estimated" and result.earned == {"example points": Decimal("20")}
+    cap = {
+        "status": "proposed",
+        "value": [
+            {
+                "cap_id": "cap",
+                "basis": "reward",
+                "limit": fact({"unit": POINTS, "quantity": "60"}),
+                "period": fact({"kind": "calendar_month", "timezone": "Asia/Singapore"}),
+                "applies_to": fact(["base"]),
+            }
+        ],
+    }
+    capped = rewards(document([rule(caps=cap)], transactions), period=week)
+    assert capped.status == "unsupported" and "no rate for USD" in capped.reason
+
+
+def minimum(qualifying=NONE):
+    return {
+        "status": "proposed",
+        "value": [
+            {
+                "requirement_id": "min",
+                "threshold": fact({"currency": "SGD", "minor_units": 5000}),
+                "date_basis": fact("transaction_date"),
+                "period": fact({"kind": "calendar_month", "timezone": "Asia/Singapore"}),
+                "qualifying_spend": qualifying,
+                "applies_to": fact(["base"]),
+            }
+        ],
+    }
+
+
+def test_minimum_spend_does_not_ignore_other_currency_purchases():
+    week = date_range("2025-02-17", "2025-02-17")
+    short = [purchase(1, FEB[0], 2500, currency="USD"), purchase(2, FEB[2], 3000)]
+    result = rewards(document([rule(minimum_spend=minimum())], short), period=week)
+    assert result.status == "unsupported" and "minimum spend" in result.reason
+    # Qualifying spend stated as SGD only: the USD purchase is excluded and the minimum unmet.
+    sgd_only = rule(minimum_spend=minimum(currency_only("SGD")))
+    unmet = rewards(document([sgd_only], short), period=week)
+    assert unmet.status == "estimated" and unmet.earned == {}
+    # Met in SGD alone: the USD purchase cannot change that.
+    met = [purchase(1, FEB[0], 2500, currency="USD"), purchase(2, FEB[2], 6000)]
+    reached = rewards(document([rule(minimum_spend=minimum())], met), period=week)
+    assert reached.status == "estimated" and reached.earned == {"example points": Decimal("120")}

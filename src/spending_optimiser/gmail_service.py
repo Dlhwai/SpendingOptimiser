@@ -303,7 +303,7 @@ class GmailService:
         if namespace is None:
             return None
         saved = self.cache.refresh_state(namespace)
-        kind, loaded = saved.get("outcome"), saved.get("loaded", 0)
+        kind, loaded, failed = saved.get("outcome"), saved.get("loaded", 0), saved.get("failed", 0)
         checked = saved.get("checked_at")
         if kind == "complete" and saved["checked_on"] != self.today().isoformat():
             kind = "stale"
@@ -318,7 +318,7 @@ class GmailService:
             message = f"{loaded} emails loaded. More are waiting: press Refresh."
         elif kind == "failed":
             message = (
-                f"{saved['failed']} emails could not be loaded from Gmail. "
+                f"{failed} emails could not be loaded from Gmail. "
                 "All other recent emails are loaded."
             )
         elif kind == "error":
@@ -333,10 +333,12 @@ class GmailService:
                 if self.cache.has_mail(namespace)
                 else "Press Refresh to load this month's emails."
             )
+        if failed and kind in {"more", "error", "processing"}:
+            message += f" {failed} emails could not be loaded from Gmail."
         return {
             "state": kind or "new",
             "message": message,
-            "alert": kind in {"failed", "error", "processing"},
+            "alert": kind in {"failed", "error", "processing"} or bool(failed),
             "checked": f"{datetime.fromisoformat(checked):%d %b %Y, %H:%M}" if checked else None,
         }
 
@@ -459,10 +461,10 @@ class GmailService:
             kind = "error"
         elif not outcome["complete"]:
             kind = "more"
-        elif unloaded:
-            kind = "failed"
         elif self.processing_error or pending:
             kind = "processing"
+        elif unloaded:
+            kind = "failed"
         else:
             kind = "complete"
         state.update(

@@ -91,7 +91,8 @@ def basis_day(t, basis):
 def month_awards(rule, purchases, basis):
     """Reward of each purchase of one card in one calendar month, in order.
 
-    Returns {event_id: (unit, Decimal)}; an entry of None means the terms say it earns nothing.
+    Returns {event_id: (unit, Decimal)}; an entry of None means the terms say it earns nothing
+    and an Unsupported entry means the terms cannot decide that purchase on its own.
     """
     rates = known(rule.earning, "earning rates")
     requirements = known(rule.minimum_spend, "minimum spend")
@@ -109,13 +110,11 @@ def month_awards(rule, purchases, basis):
         ):
             awards[t.event_id] = None
             continue
+        if any(r.reward.status not in KNOWN or r.per_spend.status not in KNOWN for r in rates):
+            raise Unsupported("rate not established")
+        same = [r for r in rates if r.per_spend.value.currency == money.currency]
         matches = []
-        for rate in rates:
-            reward, per_spend = rate.reward, rate.per_spend
-            if reward.status not in KNOWN or per_spend.status not in KNOWN:
-                raise Unsupported("rate not established")
-            if per_spend.value.currency != money.currency:
-                continue
+        for rate in same:
             if rate.date_basis.status in KNOWN and rate.date_basis.value != basis:
                 raise Unsupported("conflicting date basis")
             if all(holds(c, t) for c in known(rate.eligibility, "rate eligibility")):
@@ -123,7 +122,15 @@ def month_awards(rule, purchases, basis):
         if len(matches) > 1:
             raise Unsupported("several rates apply")
         if not matches:
-            awards[t.event_id] = None
+            # A rate stated in another currency does not say this purchase earns nothing.
+            foreign = any(
+                all(holds(c, t) for c in known(r.eligibility, "rate eligibility"))
+                for r in rates
+                if r not in same
+            )
+            awards[t.event_id] = (
+                Unsupported(f"no rate for {money.currency} purchases") if foreign else None
+            )
             continue
         qualifying.append((t, matches[0]))
     # Minimum spend counts the card's whole month, not only the days being viewed.
@@ -139,14 +146,21 @@ def month_awards(rule, purchases, basis):
             raise Unsupported("conflicting date basis")
         scope = known(requirement.applies_to, "minimum spend scope")
         counted = known(requirement.qualifying_spend, "qualifying spend")
+        relevant = [t for t in purchases if all(holds(c, t) for c in counted)]
         total = sum(
             t.amount.value.minor_units
-            for t in purchases
+            for t in relevant
             if t.amount.value.currency == threshold.value.currency
-            and all(holds(c, t) for c in counted)
         )
         if total < threshold.value.minor_units:
+            if any(t.amount.value.currency != threshold.value.currency for t in relevant):
+                raise Unsupported(
+                    f"minimum spend in {threshold.value.currency} for other currencies"
+                )
             unmet.update(scope)
+    undecided = [a for a in awards.values() if isinstance(a, Unsupported)]
+    if undecided and caps:
+        raise undecided[0]
     capped = defaultdict(Decimal)
     for t, rate in qualifying:
         if rate.rate_id in unmet:
@@ -259,8 +273,11 @@ def card_rewards(document, period, cards, choices, hidden=frozenset()):
                 awards = month_awards(rule, purchases, basis)
                 for t in purchases:
                     award = awards[t.event_id]
-                    if award is not None and period.start <= t.occurred_on.value < period.end:
-                        earned[unit_label(award[0])] += award[1]
+                    if award is None or not period.start <= t.occurred_on.value < period.end:
+                        continue
+                    if isinstance(award, Unsupported):
+                        raise award
+                    earned[unit_label(award[0])] += award[1]
             result.earned = dict(earned)
             result.status = "estimated"
             if not earned:
