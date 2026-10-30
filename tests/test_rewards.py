@@ -485,3 +485,63 @@ def test_minimum_spend_does_not_ignore_other_currency_purchases():
     met = [purchase(1, FEB[0], 2500, currency="USD"), purchase(2, FEB[2], 6000)]
     reached = rewards(document([rule(minimum_spend=minimum())], met), period=week)
     assert reached.status == "estimated" and reached.earned == {"example points": Decimal("120")}
+
+
+def excluding(dimension, operand, affects):
+    return {
+        "status": "proposed",
+        "value": [
+            {
+                "condition": {
+                    "dimension": dimension,
+                    "operator": "in",
+                    "operands": [operand],
+                    "description": "Excluded",
+                },
+                "affects": affects,
+            }
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("affects", "earned"),
+    [
+        ("both", {}),  # SGD 20 qualifying: minimum unmet, nothing earned
+        ("minimum_spend", {}),  # the telco purchase earns, but the minimum is unmet
+        ("earning", {"example points": Decimal("40")}),  # minimum met by both purchases
+    ],
+)
+def test_minimum_spend_honours_the_scope_of_each_exclusion(affects, earned):
+    terms = rule(
+        minimum_spend=minimum(), exclusions=excluding("merchant", "Example Telco", affects)
+    )
+    transactions = [
+        purchase(1, FEB[0], 4000, merchant="Example Telco"),
+        purchase(2, FEB[2], 2000, merchant="Cafe"),
+    ]
+    week = date_range("2025-02-17", "2025-02-17")
+    result = rewards(document([terms], transactions), period=week)
+    assert result.status == "estimated" and result.earned == earned
+
+
+def test_minimum_spend_still_met_without_excluded_spend():
+    terms = rule(minimum_spend=minimum(), exclusions=excluding("merchant", "Example Telco", "both"))
+    transactions = [
+        purchase(1, FEB[0], 4000, merchant="Example Telco"),
+        purchase(2, FEB[2], 6000, merchant="Cafe"),
+    ]
+    result = rewards(document([terms], transactions))
+    assert result.status == "estimated" and result.earned == {"example points": Decimal("120")}
+
+
+def test_foreign_spend_excluded_from_minimum_spend_needs_no_conversion():
+    week = date_range("2025-02-17", "2025-02-17")
+    short = [purchase(1, FEB[0], 2500, currency="USD"), purchase(2, FEB[2], 3000, merchant="Cafe")]
+    for affects in ("minimum_spend", "both"):
+        terms = rule(minimum_spend=minimum(), exclusions=excluding("currency", "USD", affects))
+        result = rewards(document([terms], short), period=week)
+        assert result.status == "estimated" and result.earned == {}  # minimum unmet in SGD
+    earning_only = rule(minimum_spend=minimum(), exclusions=excluding("currency", "USD", "earning"))
+    result = rewards(document([earning_only], short), period=week)
+    assert result.status == "unsupported" and "minimum spend" in result.reason

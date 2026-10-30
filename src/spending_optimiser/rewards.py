@@ -146,7 +146,14 @@ def month_awards(rule, purchases, basis):
             raise Unsupported("conflicting date basis")
         scope = known(requirement.applies_to, "minimum spend scope")
         counted = known(requirement.qualifying_spend, "qualifying spend")
-        relevant = [t for t in purchases if all(holds(c, t) for c in counted)]
+        relevant = [
+            t
+            for t in purchases
+            if all(holds(c, t) for c in counted)
+            and not any(
+                e.affects in {"minimum_spend", "both"} and holds(e.condition, t) for e in exclusions
+            )
+        ]
         total = sum(
             t.amount.value.minor_units
             for t in relevant
