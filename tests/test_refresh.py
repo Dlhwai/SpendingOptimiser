@@ -253,19 +253,27 @@ def test_an_unloadable_message_is_reported_without_holding_back_later_mail(tmp_p
     assert fake.gets() == ["next-day"]
     assert state["outcome"] == "failed" and state["failed"] == 1 and state["loaded"] == 1
     assert state["through"] == "2025-03-21"
-    # Once the interval has moved past it, Refresh lists only new days and completes.
+    # Once the interval has moved past it, Refresh lists only new days and loads new mail,
+    # yet the unresolved message is still reported after a restart, never "all loaded".
     fake.mailbox["later"] = ms(2025, 3, 22, 9)
     fake.calls.clear()
     fake.queries.clear()
-    service.today = lambda: date(2025, 3, 22)
+    service = service_for(path, fake, today=date(2025, 3, 22))
     state = refresh(service)
     assert fake.windows() == [(date(2025, 3, 21), date(2025, 3, 22))]
     assert fake.gets() == ["later"] and "bad" not in [call[1] for call in fake.calls]
-    assert state["outcome"] == "complete" and state["through"] == "2025-03-22"
-    assert service.refresh_view()["message"] == "All recent emails are loaded. 1 new."
+    assert state["outcome"] == "failed" and state["through"] == "2025-03-22"
+    assert "later" in service.saved_range(date_range("2025-03-22", "2025-03-22"))[0]
+    view = service_for(path, fake, today=date(2025, 3, 22)).refresh_view()
+    assert view["alert"] and "All recent emails are loaded" not in view["message"]
+    assert view["message"].startswith("1 emails could not be loaded")
+    # Saving the message by any route resolves the gap on the next Refresh.
+    fake.fail_get = set()
+    service.load_range(date_range("2025-03-20", "2025-03-20"), 1, service.connection_id, "refresh")
+    state = refresh(service)
+    assert state["outcome"] == "complete" and state["failed"] == 0
+    assert service.refresh_view()["message"].startswith("All recent emails are loaded")
     # The failure record itself is kept.
-    assert service.cache.failed_ids(service.namespace) == {"bad": "invalid_message"}
-    assert "bad" not in service.saved_range(date_range("2025-03-01", "2025-03-22"))[0]
 
 
 def test_an_interrupted_refresh_resumes_its_page_after_the_day_changes(tmp_path, monkeypatch):
@@ -280,9 +288,10 @@ def test_an_interrupted_refresh_resumes_its_page_after_the_day_changes(tmp_path,
     fake.queries.clear()
     monkeypatch.setattr(gmail_service, "REFRESH_PAGES", 2)
     state = refresh(service, date(2025, 3, 21))
-    # The new day is its own chunk; the unfinished chunk continues from its second page.
+    # The new days, overlapping the old last day, are their own chunk; the unfinished chunk
+    # continues from its second page.
     assert fake.windows() == [
-        (date(2025, 3, 21), date(2025, 3, 21)),
+        (date(2025, 3, 20), date(2025, 3, 21)),
         (date(2025, 3, 1), date(2025, 3, 20)),
     ]
     assert [call for call in fake.calls if call[0] == "list"] == [("list", None), ("list", "10")]
@@ -294,6 +303,27 @@ def test_an_interrupted_refresh_resumes_its_page_after_the_day_changes(tmp_path,
     assert state["outcome"] == "complete" and state["through"] == "2025-03-22"
     assert set(service.saved_range(date_range("2025-03-01", "2025-03-22"))[0]) == set(fake.mailbox)
     assert sorted(fake.gets()) == sorted(set(fake.gets()))  # nothing fetched twice
+
+
+def test_mail_arriving_late_on_an_interrupted_last_day_is_loaded(tmp_path, monkeypatch):
+    path = tmp_path / "late.sqlite3"
+    mailbox = {f"m{i:02}": ms(2025, 3, 1 + i % 20, 8, i) for i in range(30)}
+    fake = WindowedMail(mailbox, size=10)
+    for key in mailbox:
+        fake.bodies[key] = PURCHASE.format(amount=f"{int(key[1:]) + 1}.00", day="2025-03-01")
+    monkeypatch.setattr(gmail_service, "REFRESH_PAGES", 1)
+    service = service_for(path, fake)
+    assert refresh(service)["outcome"] == "more"
+    fake.mailbox["late"] = ms(2025, 3, 20, 22)
+    fake.bodies["late"] = PURCHASE.format(amount="99.00", day="2025-03-20")
+    monkeypatch.setattr(gmail_service, "REFRESH_PAGES", 25)
+    state = refresh(service, date(2025, 3, 21))
+    assert state["outcome"] == "complete" and state["through"] == "2025-03-21"
+    assert "late" in service.saved_range(date_range("2025-03-20", "2025-03-21"))[0]
+    state = refresh(service, date(2025, 3, 21))
+    assert state["outcome"] == "complete" and state["loaded"] == 0
+    assert sorted(fake.gets()) == sorted(fake.mailbox)  # each message fetched once
+    assert len(heads(service.cache.ledger.load())) == 31
 
 
 def test_scan_progress_does_not_copy_every_saved_message(tmp_path):

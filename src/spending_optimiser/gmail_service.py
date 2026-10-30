@@ -5,7 +5,7 @@ import secrets
 import sqlite3
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 from .dotenv_store import DotenvFile, default_env_path
 from .gmail import AuthenticationFailure, GmailAdapter, GmailRestClient
@@ -362,24 +362,25 @@ class GmailService:
     def _refresh(self, connection, namespace, today):
         start = self.refresh_start(namespace, today)
         state = self.cache.refresh_state(namespace)
-        # An unfinished Refresh resumes its own chunks; days since then are a separate chunk.
+        # An unfinished Refresh resumes its own chunks. Mail can still arrive on its last day
+        # after that listing passed it, so the last day is listed again with the newer days.
         end = min(date.fromisoformat(state.get("resume_to", today.isoformat())), today)
         periods = split_range(start, end)
         if end < today:
-            periods += split_range(end + timedelta(days=1), today)
+            periods += split_range(end, today)
         self.cache.save_refresh_state(
             namespace, {**state, "resume_from": start.isoformat(), "resume_to": end.isoformat()}
         )
         self.problem = None
         self.new_mail = 0
-        budget, failed, error, done = REFRESH_PAGES, 0, None, True
+        budget, failed, error, done = REFRESH_PAGES, {}, None, True
         # Newest chunk first, so the freshest mail is usable even if the budget runs out.
         for period in reversed(periods):
             used, finished, unresolved, error = self._scan(
                 period, budget, connection, namespace, today
             )
             budget -= used
-            failed += unresolved
+            failed.update(unresolved)
             done &= finished
             if error or budget <= 0 and not finished:
                 done = False
@@ -401,9 +402,9 @@ class GmailService:
             and scan["finished_on"] is not None
             and scan["finished_on"] > period.last.isoformat()
         ):
-            return 0, True, len(scan["failed"]), None  # ended after its last day: no new mail
+            return 0, True, scan["failed"], None  # ended after its last day: no new mail
         if budget <= 0:
-            return 0, False, len(scan["failed"]), None
+            return 0, False, scan["failed"], None
         if scan["exhausted"] or not scan["started"]:
             # List from the newest page. Newer mail may have arrived since an earlier listing
             # ended; proven unloadable messages stay recorded and are not fetched again.
@@ -429,7 +430,7 @@ class GmailService:
             scan["finished_on"] = today.isoformat()
             self.cache.save(namespace, period, scan, [])
         error = scan["errors"][0] if scan["errors"] else None
-        return used, listed, len(scan["failed"]), error
+        return used, listed, scan["failed"], error
 
     def _process(self, namespace):
         """Process saved mail in bounded batches. True when some entries could not be processed."""
@@ -450,11 +451,15 @@ class GmailService:
         pending = self.cache.pending_count(namespace, REVISION) or discovery_pending(
             self.cache, namespace
         )
+        # Unloadable mail from any requested interval stays reported until it is saved.
+        unloaded = {**state.get("unloaded", {}), **outcome["failed"]}
+        for message_id in self.cache.saved_ids(namespace):
+            unloaded.pop(message_id, None)
         if outcome["error"]:
             kind = "error"
         elif not outcome["complete"]:
             kind = "more"
-        elif outcome["failed"]:
+        elif unloaded:
             kind = "failed"
         elif self.processing_error or pending:
             kind = "processing"
@@ -463,7 +468,8 @@ class GmailService:
         state.update(
             outcome=kind,
             loaded=outcome["loaded"],
-            failed=outcome["failed"],
+            failed=len(unloaded),
+            unloaded=unloaded,
             error=outcome["error"],
             checked_at=datetime.now(SINGAPORE).isoformat(timespec="seconds"),
             checked_on=outcome["through"],
