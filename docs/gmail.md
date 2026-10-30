@@ -269,12 +269,15 @@ The sidebar has three steps: **1 Connect Gmail**, **2 Cards** and
    - **Resumable and safe.** Newest-first pages are saved as they arrive, but the
      start day is only moved forward after the whole interval finished. A newest
      message that was saved by an interrupted Refresh is not proof that older pages
-     were loaded. A message that failed (`invalid_message` or `response_too_large`) keeps
-     the start day in place and is fetched again on the next Refresh; later pages still
-     load. Listing, network, rate-limit and auth failures never advance anything and
+     were loaded. A message Gmail cannot return (`invalid_message` or `response_too_large`)
+     is recorded and not fetched again; it does not hold the start day back, and later
+     Refreshes keep reporting **N emails could not be loaded from Gmail** until it is
+     saved. Listing, network, rate-limit and auth failures never advance anything and
      are reported with what to do next.
-   - **Truthful.** **All recent emails are loaded** appears only when the interval
-     really finished and every saved message was processed. Mail that was fetched but
+   - **Truthful.** Feedback is composed from the stored facts when the page is shown, so
+     unloaded mail, unprocessed mail and an old refresh date are each reported and none
+     hides another. **All recent emails are loaded** appears only when the interval
+     really finished today and every saved message was processed. Mail that was fetched but
      cannot qualify as a transaction is saved and counts as loaded; mail that was never
      fetched does not. The wording does not claim complete financial or reward
      coverage, which Gmail search cannot establish.
