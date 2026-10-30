@@ -6,7 +6,7 @@ extractor revision has handled, so repeated processing is a no-op.
 
 import hashlib
 import json
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 
 from pydantic import TypeAdapter
 
@@ -46,16 +46,6 @@ def fresh_state():
         # Singapore day on which the listing last ended cleanly (None: never).
         "finished_on": None,
     }
-
-
-def scan_clean(state):
-    """The whole listing was read and every message in it was saved."""
-    return bool(state["exhausted"] and not state["failed"] and not state["errors"])
-
-
-def scan_start(key):
-    """First day of a stored scan key: YYYY-MM, or START..END days."""
-    return date.fromisoformat(key[:10] if ".." in key else key + "-01")
 
 
 class MailCache:
@@ -230,21 +220,16 @@ class MailCache:
                 latest = received
         return latest
 
-    def unfinished_start(self, namespace):
-        """Earliest first day among earlier scans that never read their whole listing."""
+    def failed_ids(self, namespace):
+        """Messages any scan of this account could not load, with the reason last recorded."""
         with self.ledger.connection() as db:
             rows = db.execute(
-                "SELECT month, payload FROM mail_scans WHERE namespace=?", (namespace,)
+                "SELECT payload FROM mail_scans WHERE namespace=?", (namespace,)
             ).fetchall()
-        starts = []
-        for key, payload in rows:
-            state = {**fresh_state(), **json.loads(payload)}
-            if state["started"] and not scan_clean(state):
-                try:
-                    starts.append(scan_start(key))
-                except ValueError:
-                    continue
-        return min(starts, default=None)
+        failed = {}
+        for (payload,) in rows:
+            failed.update(json.loads(payload).get("failed", {}))
+        return failed
 
     def candidates(self, namespace, period):
         """Current receipt-period mail by saved identity; None marks an unreadable payload."""

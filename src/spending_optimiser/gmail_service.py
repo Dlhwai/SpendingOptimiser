@@ -5,13 +5,13 @@ import secrets
 import sqlite3
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from .dotenv_store import DotenvFile, default_env_path
 from .gmail import AuthenticationFailure, GmailAdapter, GmailRestClient
 from .gmail_auth import EnvStore, GmailProblem, GoogleOAuth, client_config
 from .local_templates import discovery_pending
-from .mail_cache import MailCache, fresh_state, scan_clean
+from .mail_cache import MailCache, fresh_state
 from .monthly import SINGAPORE, split_range
 from .processing import REVISION, process_saved
 
@@ -205,7 +205,8 @@ class GmailService:
                 except (ValueError, OSError, sqlite3.Error):
                     self.processing_error = True
 
-    def _load_range(self, period, pages, action, connection, namespace):
+    def _load_range(self, period, pages, action, connection, namespace, skip=(), known=None):
+        known = known or {}
         state = fresh_state() if action == "refresh" else self.cache.state(namespace, period)
         self.notice_range = period.key
         if action == "continue" and state["exhausted"]:
@@ -235,8 +236,11 @@ class GmailService:
                     query=period.query,
                     page_token=state["token"],
                     page_size=20,
-                    seen_ids=[*state["seen"], *state["failed"]],
+                    seen_ids=[*skip, *known, *state["seen"], *state["failed"]],
                 )
+                for message_id in page.duplicate_ids:
+                    if message_id in known:
+                        state["failed"][message_id] = known[message_id]
                 state["started"] = True
                 state["checked_at"] = datetime.now(SINGAPORE).isoformat(timespec="seconds")
                 retried = set(state["retry"])
@@ -291,8 +295,7 @@ class GmailService:
             return min(date.fromisoformat(remembered), today)
         latest = self.cache.latest_received(namespace)
         start = latest.astimezone(SINGAPORE).date() if latest else today.replace(day=1)
-        unfinished = self.cache.unfinished_start(namespace)
-        return min(start if unfinished is None else min(start, unfinished), today)
+        return min(start, today)
 
     def refresh_view(self):
         """Saved facts only: what the Connect page says about this account's mail."""
@@ -314,7 +317,10 @@ class GmailService:
         elif kind == "more":
             message = f"{loaded} emails loaded. More are waiting: press Refresh."
         elif kind == "failed":
-            message = f"{saved['failed']} emails could not be loaded. Press Refresh to retry."
+            message = (
+                f"{saved['failed']} emails could not be loaded from Gmail. "
+                "All other recent emails are loaded."
+            )
         elif kind == "error":
             message = ERRORS.get(
                 saved.get("error"), "Gmail could not be reached. Press Refresh to try again."
@@ -356,12 +362,19 @@ class GmailService:
     def _refresh(self, connection, namespace, today):
         start = self.refresh_start(namespace, today)
         state = self.cache.refresh_state(namespace)
-        self.cache.save_refresh_state(namespace, {**state, "resume_from": start.isoformat()})
+        # An unfinished Refresh resumes its own chunks; days since then are a separate chunk.
+        end = min(date.fromisoformat(state.get("resume_to", today.isoformat())), today)
+        periods = split_range(start, end)
+        if end < today:
+            periods += split_range(end + timedelta(days=1), today)
+        self.cache.save_refresh_state(
+            namespace, {**state, "resume_from": start.isoformat(), "resume_to": end.isoformat()}
+        )
         self.problem = None
         self.new_mail = 0
         budget, failed, error, done = REFRESH_PAGES, 0, None, True
         # Newest chunk first, so the freshest mail is usable even if the budget runs out.
-        for period in reversed(split_range(start, today)):
+        for period in reversed(periods):
             used, finished, unresolved, error = self._scan(
                 period, budget, connection, namespace, today
             )
@@ -372,7 +385,7 @@ class GmailService:
                 done = False
                 break
         return {
-            "complete": done and not error and not failed,
+            "complete": done and not error,
             "loaded": self.new_mail,
             "failed": failed,
             "error": error,
@@ -380,42 +393,43 @@ class GmailService:
         }
 
     def _scan(self, period, budget, connection, namespace, today):
-        """Resume or restart one chunk. Returns pages used, finished, failed and error."""
+        """Resume or restart one chunk. Returns pages used, listing finished, failed and error."""
         scan = self.cache.state(namespace, period)
         if (
-            scan_clean(scan)
+            scan["exhausted"]
+            and not scan["errors"]
             and scan["finished_on"] is not None
             and scan["finished_on"] > period.last.isoformat()
         ):
-            return 0, True, 0, None  # ended after its last day: no mail can still arrive
+            return 0, True, len(scan["failed"]), None  # ended after its last day: no new mail
         if budget <= 0:
             return 0, False, len(scan["failed"]), None
         if scan["exhausted"] or not scan["started"]:
             # List from the newest page. Newer mail may have arrived since an earlier listing
-            # ended, so skip what is already saved and keep messages that still need a retry.
-            scan = {
-                **fresh_state(),
-                "seen": self.cache.saved_ids(namespace),
-                "failed": scan["failed"],
-            }
+            # ended; proven unloadable messages stay recorded and are not fetched again.
+            scan = {**fresh_state(), "failed": scan["failed"]}
             self.cache.save(namespace, period, scan, [])
+        saved = self.cache.saved_ids(namespace)
+        known = {
+            message_id: code
+            for message_id, code in self.cache.failed_ids(namespace).items()
+            if code in PERSISTENT
+        }
+        for message_id in saved:
+            known.pop(message_id, None)
         used = 0
-        if scan["failed"]:
-            self._load_range(period, 1, "retry", connection, namespace)
-            used += 1
         while used < budget:
-            self._load_range(period, 1, "continue", connection, namespace)
+            self._load_range(period, 1, "continue", connection, namespace, saved, known)
             used += 1
             scan = self.cache.state(namespace, period)
             if scan["exhausted"] or scan["errors"]:
                 break
-        scan = self.cache.state(namespace, period)
-        clean = scan_clean(scan)
-        if scan["exhausted"] and not scan["errors"]:
+        listed = scan["exhausted"] and not scan["errors"]
+        if listed:
             scan["finished_on"] = today.isoformat()
             self.cache.save(namespace, period, scan, [])
         error = scan["errors"][0] if scan["errors"] else None
-        return used, clean, len(scan["failed"]), error
+        return used, listed, len(scan["failed"]), error
 
     def _process(self, namespace):
         """Process saved mail in bounded batches. True when some entries could not be processed."""
@@ -438,10 +452,10 @@ class GmailService:
         )
         if outcome["error"]:
             kind = "error"
-        elif outcome["failed"]:
-            kind = "failed"
         elif not outcome["complete"]:
             kind = "more"
+        elif outcome["failed"]:
+            kind = "failed"
         elif self.processing_error or pending:
             kind = "processing"
         else:
@@ -458,6 +472,7 @@ class GmailService:
             # Everything from the start of this Refresh through today is saved.
             state["through"] = outcome["through"]
             state.pop("resume_from", None)
+            state.pop("resume_to", None)
         self.cache.save_refresh_state(namespace, state)
 
     def verify(self, connection, errors):

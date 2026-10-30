@@ -231,24 +231,86 @@ def test_an_interrupted_refresh_resumes_older_pages_instead_of_skipping_them(tmp
     assert sorted(fake.gets()) == sorted(mailbox)  # every message fetched exactly once
 
 
-def test_a_failed_message_keeps_the_boundary_until_it_is_loaded(tmp_path):
+def test_an_unloadable_message_is_reported_without_holding_back_later_mail(tmp_path):
     path = tmp_path / "failed.sqlite3"
-    fake = WindowedMail({"good": ms(2025, 3, 18), "bad": ms(2025, 3, 10), "old": ms(2025, 3, 3)})
+    fake = WindowedMail({"good": ms(2025, 3, 18), "bad": ms(2025, 3, 20, 7), "old": ms(2025, 3, 3)})
     fake.fail_get = {"bad"}
     service = service_for(path, fake)
     state = refresh(service)
-    assert state["outcome"] == "failed" and state["failed"] == 1 and state["through"] is None
+    assert state["outcome"] == "failed" and state["failed"] == 1
+    assert state["through"] == "2025-03-20" and "resume_from" not in state
     assert set(service.saved_range(calendar_month("2025-03"))[0]) == {"good", "old"}
     view = service.refresh_view()
-    assert (
-        view["message"] == "1 emails could not be loaded. Press Refresh to retry." and view["alert"]
+    assert view["alert"] and view["message"] == (
+        "1 emails could not be loaded from Gmail. All other recent emails are loaded."
     )
-    fake.fail_get = set()
+    # The next day still covers the failed message's day: it is reported, not fetched again.
+    fake.mailbox["next-day"] = ms(2025, 3, 21, 9)
     fake.calls.clear()
+    fake.queries.clear()
+    state = refresh(service, date(2025, 3, 21))
+    assert fake.windows() == [(date(2025, 3, 20), date(2025, 3, 21))]
+    assert fake.gets() == ["next-day"]
+    assert state["outcome"] == "failed" and state["failed"] == 1 and state["loaded"] == 1
+    assert state["through"] == "2025-03-21"
+    # Once the interval has moved past it, Refresh lists only new days and completes.
+    fake.mailbox["later"] = ms(2025, 3, 22, 9)
+    fake.calls.clear()
+    fake.queries.clear()
+    service.today = lambda: date(2025, 3, 22)
     state = refresh(service)
-    assert state["outcome"] == "complete" and state["through"] == "2025-03-20"
-    assert fake.gets() == ["bad"]  # only the failed message is fetched again
-    assert set(service.saved_range(calendar_month("2025-03"))[0]) == {"good", "bad", "old"}
+    assert fake.windows() == [(date(2025, 3, 21), date(2025, 3, 22))]
+    assert fake.gets() == ["later"] and "bad" not in [call[1] for call in fake.calls]
+    assert state["outcome"] == "complete" and state["through"] == "2025-03-22"
+    assert service.refresh_view()["message"] == "All recent emails are loaded. 1 new."
+    # The failure record itself is kept.
+    assert service.cache.failed_ids(service.namespace) == {"bad": "invalid_message"}
+    assert "bad" not in service.saved_range(date_range("2025-03-01", "2025-03-22"))[0]
+
+
+def test_an_interrupted_refresh_resumes_its_page_after_the_day_changes(tmp_path, monkeypatch):
+    path = tmp_path / "large.sqlite3"
+    mailbox = {f"m{i:02}": ms(2025, 3, 1 + i % 18, 8, i) for i in range(30)}
+    fake = WindowedMail(mailbox, size=10)
+    monkeypatch.setattr(gmail_service, "REFRESH_PAGES", 1)
+    service = service_for(path, fake)
+    assert refresh(service)["outcome"] == "more"
+    fake.mailbox["new-day"] = ms(2025, 3, 21, 9)
+    fake.calls.clear()
+    fake.queries.clear()
+    monkeypatch.setattr(gmail_service, "REFRESH_PAGES", 2)
+    state = refresh(service, date(2025, 3, 21))
+    # The new day is its own chunk; the unfinished chunk continues from its second page.
+    assert fake.windows() == [
+        (date(2025, 3, 21), date(2025, 3, 21)),
+        (date(2025, 3, 1), date(2025, 3, 20)),
+    ]
+    assert [call for call in fake.calls if call[0] == "list"] == [("list", None), ("list", "10")]
+    assert state["outcome"] == "more" and state["resume_from"] == "2025-03-01"
+    fake.calls.clear()
+    monkeypatch.setattr(gmail_service, "REFRESH_PAGES", 25)
+    state = refresh(service, date(2025, 3, 22))
+    assert ("list", "20") in fake.calls and ("list", "10") not in fake.calls
+    assert state["outcome"] == "complete" and state["through"] == "2025-03-22"
+    assert set(service.saved_range(date_range("2025-03-01", "2025-03-22"))[0]) == set(fake.mailbox)
+    assert sorted(fake.gets()) == sorted(set(fake.gets()))  # nothing fetched twice
+
+
+def test_scan_progress_does_not_copy_every_saved_message(tmp_path):
+    fake = WindowedMail({f"m{i:02}": ms(2025, 3, 1 + i % 19, 8, i) for i in range(40)})
+    service = service_for(tmp_path / "bounded.sqlite3", fake)
+    refresh(service)
+    for day in (21, 22, 23):
+        fake.mailbox[f"d{day}"] = ms(2025, 3, day, 9)
+        state = refresh(service, date(2025, 3, day))
+        assert state["outcome"] == "complete" and state["loaded"] == 1
+    with service.cache.ledger.connection() as db:
+        rows = db.execute("SELECT month, payload FROM mail_scans").fetchall()
+    for key, payload in rows:
+        if key != "2025-03-01..2025-03-20":
+            assert len(json.loads(payload)["seen"]) <= 2
+    assert len(service.cache.saved_ids(service.namespace)) == 43
+    assert sorted(fake.gets()) == sorted(fake.mailbox)
 
 
 def test_a_gmail_error_is_actionable_and_the_next_refresh_continues(tmp_path):
@@ -287,7 +349,9 @@ def test_refreshing_twice_on_one_day_neither_duplicates_nor_misses_new_mail(tmp_
     fake.queries.clear()
     refresh(service, date(2025, 3, 21))
     assert fake.windows() == [(date(2025, 3, 20), date(2025, 3, 21))]
-    assert service.cache.state(service.namespace, date_range("2025-03-20", "2025-03-21"))["seen"]
+    assert service.cache.state(service.namespace, date_range("2025-03-20", "2025-03-21"))[
+        "exhausted"
+    ]
 
 
 def test_accounts_keep_separate_boundaries_and_mail(tmp_path):
@@ -401,22 +465,26 @@ def test_web_refresh_reports_through_the_page_and_never_loads_on_get(tmp_path):
     assert json.loads(client.get("/gmail/status").text)["state"] == "idle"
 
 
-def test_legacy_unfinished_period_scans_are_resumed_from_their_own_first_day(tmp_path):
+def test_an_old_abandoned_manual_scan_does_not_widen_the_first_refresh(tmp_path):
     path = tmp_path / "legacy.sqlite3"
-    fake = WindowedMail({f"m{i}": ms(2025, 3, 2 + i, 8) for i in range(6)}, size=2)
+    old = {f"jan{i}": ms(2025, 1, 2 + i, 8) for i in range(6)}
+    fake = WindowedMail({**old, "recent": ms(2025, 3, 12, 8)}, size=2)
     first = service_for(path, fake)
-    month = calendar_month("2025-03")
-    first.load_range(month, 1, first.connection_id, "continue")  # an earlier version's partial load
-    assert not first.saved_range(month)[1]["exhausted"]
+    january = calendar_month("2025-01")
+    first.load_range(january, 1, first.connection_id, "continue")  # an earlier version's load
+    first.load_range(calendar_month("2025-03"), 1, first.connection_id, "continue")
+    assert not first.saved_range(january)[1]["exhausted"]
     with first.cache.ledger.connection() as db:
         assert db.execute("SELECT count(*) FROM mail_refresh").fetchone()[0] == 0
-    # Mail up to 3 March is saved, so the newest-first listing began at the latest messages.
-    latest = first.cache.latest_received(first.namespace).astimezone(SINGAPORE).date()
-    assert latest > date(2025, 3, 2)
-    assert first.refresh_start(first.namespace, TODAY) == date(2025, 3, 1)
+    fake.mailbox["newer"] = ms(2025, 3, 19, 8)
+    fake.queries.clear()
+    fake.calls.clear()
     state = refresh(first)
-    assert state["outcome"] == "complete"
-    assert set(first.saved_range(month)[0]) == set(fake.mailbox)
+    assert fake.windows() == [(date(2025, 3, 12), TODAY)]
+    assert fake.gets() == ["newer"] and state["outcome"] == "complete"
+    # The old record is preserved as it was.
+    january_state = first.saved_range(january)[1]
+    assert january_state["started"] and not january_state["exhausted"]
 
 
 def test_mail_source_pages_keep_untrusted_mail_inert(tmp_path):
