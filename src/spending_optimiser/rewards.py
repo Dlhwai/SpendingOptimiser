@@ -88,6 +88,20 @@ def basis_day(t, basis):
     return day
 
 
+def reached(threshold, purchases):
+    """Whether these purchases meet a minimum spend; Unsupported when a conversion is needed."""
+    total = sum(
+        t.amount.value.minor_units
+        for t in purchases
+        if t.amount.value.currency == threshold.currency
+    )
+    if total >= threshold.minor_units:
+        return True
+    if any(t.amount.value.currency != threshold.currency for t in purchases):
+        raise Unsupported(f"minimum spend in {threshold.currency} for other currencies")
+    return False
+
+
 def month_awards(rule, purchases, basis):
     """Reward of each purchase of one card in one calendar month, in order.
 
@@ -154,16 +168,13 @@ def month_awards(rule, purchases, basis):
                 e.affects in {"minimum_spend", "both"} and holds(e.condition, t) for e in exclusions
             )
         ]
-        total = sum(
-            t.amount.value.minor_units
-            for t in relevant
-            if t.amount.value.currency == threshold.value.currency
-        )
-        if total < threshold.value.minor_units:
-            if any(t.amount.value.currency != threshold.value.currency for t in relevant):
-                raise Unsupported(
-                    f"minimum spend in {threshold.value.currency} for other currencies"
-                )
+        met = reached(threshold.value, relevant)
+        # The terms do not say whether the rule's eligibility limits minimum-spend qualification.
+        if conditions and met != reached(
+            threshold.value, [t for t in relevant if all(holds(c, t) for c in conditions)]
+        ):
+            raise Unsupported("minimum spend may or may not count purchases the rule excludes")
+        if not met:
             unmet.update(scope)
     undecided = [a for a in awards.values() if isinstance(a, Unsupported)]
     if undecided and caps:

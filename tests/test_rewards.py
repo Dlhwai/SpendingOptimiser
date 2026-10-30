@@ -545,3 +545,58 @@ def test_foreign_spend_excluded_from_minimum_spend_needs_no_conversion():
     earning_only = rule(minimum_spend=minimum(), exclusions=excluding("currency", "USD", "earning"))
     result = rewards(document([earning_only], short), period=week)
     assert result.status == "unsupported" and "minimum spend" in result.reason
+
+
+def merchant_only(merchant):
+    return {
+        "status": "proposed",
+        "value": [
+            {
+                "dimension": "merchant",
+                "operator": "in",
+                "operands": [merchant],
+                "description": "Eligible merchant",
+            }
+        ],
+    }
+
+
+def test_an_undocumented_eligibility_scope_for_minimum_spend_withholds_the_estimate():
+    terms = rule(eligibility=merchant_only("Online Shop"), minimum_spend=minimum())
+    transactions = [
+        purchase(1, FEB[0], 4000, merchant="Corner Shop"),
+        purchase(2, FEB[2], 2000, merchant="Online Shop"),
+    ]
+    result = rewards(document([terms], transactions))
+    assert result.status == "unsupported" and result.earned == {}
+    assert result.reason == (
+        "Terms incomplete: minimum spend may or may not count purchases the rule excludes"
+    )
+
+
+@pytest.mark.parametrize(
+    ("in_store", "online", "earned"),
+    [
+        (4000, 6000, {"example points": Decimal("120")}),  # met either way
+        (1000, 2000, {}),  # unmet either way
+    ],
+)
+def test_eligibility_scope_does_not_matter_when_both_readings_agree(in_store, online, earned):
+    terms = rule(eligibility=merchant_only("Online Shop"), minimum_spend=minimum())
+    transactions = [
+        purchase(1, FEB[0], in_store, merchant="Corner Shop"),
+        purchase(2, FEB[2], online, merchant="Online Shop"),
+    ]
+    result = rewards(document([terms], transactions))
+    assert result.status == "estimated" and result.earned == earned
+
+
+def test_eligibility_without_a_minimum_and_a_minimum_without_eligibility_still_estimate():
+    transactions = [
+        purchase(1, FEB[0], 4000, merchant="Corner Shop"),
+        purchase(2, FEB[2], 2000, merchant="Online Shop"),
+    ]
+    no_minimum = rewards(document([rule(eligibility=merchant_only("Online Shop"))], transactions))
+    assert no_minimum.earned == {"example points": Decimal("40")}
+    no_restriction = rewards(document([rule(minimum_spend=minimum())], transactions))
+    assert no_restriction.earned == {"example points": Decimal("120")}
