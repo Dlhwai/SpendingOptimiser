@@ -312,6 +312,68 @@ def test_an_unloadable_message_and_unprocessed_mail_are_both_reported(tmp_path, 
     )
 
 
+def test_feedback_never_claims_freshness_or_completion_it_does_not_have(tmp_path, monkeypatch):
+    path = tmp_path / "views.sqlite3"
+    fake = WindowedMail({"bad": ms(2025, 3, 20, 7), "ok": ms(2025, 3, 20, 8)})
+    fake.fail_get = {"bad"}
+    refresh(service_for(path, fake))
+
+    def view(day):
+        return service_for(path, fake, today=day).refresh_view()  # a restarted app
+
+    same_day = view(TODAY)
+    assert same_day["state"] == "failed" and same_day["alert"]
+    assert same_day["message"] == (
+        "1 emails could not be loaded from Gmail. All other recent emails are loaded."
+    )
+    # Days later, without pressing Refresh: no claim that recent mail is loaded.
+    later = view(date(2025, 3, 27))
+    assert later["state"] == "stale" and later["alert"]
+    assert later["message"] == (
+        "Last refreshed 20 Mar 2025. Press Refresh. 1 emails could not be loaded from Gmail."
+    )
+    client = TestClient(
+        create_app(path, gmail_service=service_for(path, fake, today=date(2025, 3, 27))),
+        base_url=BASE,
+    )
+    page = client.get("/gmail").text
+    assert "Needs refresh" in page and "recent emails are loaded" not in page
+    # Unprocessed mail after a gap: both are reported, today and on later days.
+    fake.mailbox["buy"] = ms(2025, 3, 27, 9)
+    fake.bodies["buy"] = PURCHASE.format(amount="21.40", day="2025-03-27")
+    monkeypatch.setattr(gmail_service, "process_saved", lambda cache, namespace: 1)
+    refresh(service_for(path, fake, today=date(2025, 3, 27)))
+    today = view(date(2025, 3, 27))
+    assert today["state"] == "processing" and today["message"] == (
+        "Some saved emails could not be processed. Press Refresh to retry. "
+        "1 emails could not be loaded from Gmail."
+    )
+    next_day = view(date(2025, 3, 28))
+    assert next_day["state"] == "stale" and next_day["message"] == (
+        "Last refreshed 27 Mar 2025. Press Refresh. Some saved emails could not be processed. "
+        "1 emails could not be loaded from Gmail."
+    )
+
+
+def test_a_complete_refresh_with_mail_left_unprocessed_is_not_called_complete(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "pending.sqlite3"
+    fake = WindowedMail({"a": ms(2025, 3, 20, 7)})
+    service = service_for(path, fake)
+    refresh(service)
+    assert service.refresh_view()["state"] == "complete"
+    # Mail saved afterwards but not yet processed is not covered by the old completion.
+    fake.mailbox["b"] = ms(2025, 3, 20, 9)
+    monkeypatch.setattr(gmail_service, "PROCESS_ROUNDS", 0)
+    assert refresh(service)["outcome"] == "processing"
+    shown = service_for(path, fake).refresh_view()
+    assert shown["state"] == "processing" and "loaded" not in shown["message"]
+    monkeypatch.setattr(gmail_service, "PROCESS_ROUNDS", 30)
+    refresh(service)
+    assert service.refresh_view()["message"] == "All recent emails are loaded. No new emails."
+
+
 def test_an_interrupted_refresh_resumes_its_page_after_the_day_changes(tmp_path, monkeypatch):
     path = tmp_path / "large.sqlite3"
     mailbox = {f"m{i:02}": ms(2025, 3, 1 + i % 18, 8, i) for i in range(30)}

@@ -305,40 +305,62 @@ class GmailService:
         saved = self.cache.refresh_state(namespace)
         kind, loaded, failed = saved.get("outcome"), saved.get("loaded", 0), saved.get("failed", 0)
         checked = saved.get("checked_at")
-        if kind == "complete" and saved["checked_on"] != self.today().isoformat():
-            kind = "stale"
-            message = (
-                f"Last refreshed {date.fromisoformat(saved['checked_on']):%d %b %Y}. Press Refresh."
+        # Each stored fact is reported on its own, so none of them can hide another.
+        covered = kind in {"complete", "failed", "processing"}
+        fresh = covered and saved["checked_on"] == self.today().isoformat()
+        unprocessed = kind == "processing" or bool(
+            kind
+            and (
+                self.cache.pending_count(namespace, REVISION)
+                or discovery_pending(self.cache, namespace)
             )
-        elif kind == "complete":
-            message = "All recent emails are loaded. " + (
-                f"{loaded} new." if loaded else "No new emails."
+        )
+        parts = []
+        if kind == "error":
+            parts.append(
+                ERRORS.get(
+                    saved.get("error"), "Gmail could not be reached. Press Refresh to try again."
+                )
             )
         elif kind == "more":
-            message = f"{loaded} emails loaded. More are waiting: press Refresh."
-        elif kind == "failed":
-            message = (
-                f"{failed} emails could not be loaded from Gmail. "
-                "All other recent emails are loaded."
-            )
-        elif kind == "error":
-            message = ERRORS.get(
-                saved.get("error"), "Gmail could not be reached. Press Refresh to try again."
-            )
-        elif kind == "processing":
-            message = "Emails are saved, but some could not be processed. Press Refresh to retry."
-        else:
-            message = (
+            parts.append(f"{loaded} emails loaded. More are waiting: press Refresh.")
+        elif kind is None:
+            parts.append(
                 "Press Refresh to load new emails."
                 if self.cache.has_mail(namespace)
                 else "Press Refresh to load this month's emails."
             )
-        if failed and kind in {"more", "error", "processing"}:
-            message += f" {failed} emails could not be loaded from Gmail."
+        elif not fresh:
+            parts.append(
+                f"Last refreshed {date.fromisoformat(saved['checked_on']):%d %b %Y}. Press Refresh."
+            )
+        if unprocessed:
+            parts.append(
+                "Some saved emails could not be processed."
+                + ("" if parts else " Press Refresh to retry.")
+            )
+        if failed:
+            parts.append(f"{failed} emails could not be loaded from Gmail.")
+        done = fresh and not unprocessed
+        if done:
+            parts.append(
+                "All other recent emails are loaded."
+                if failed
+                else "All recent emails are loaded. "
+                + (f"{loaded} new." if loaded else "No new emails.")
+            )
+        if done and not failed:
+            state = "complete"
+        elif covered and not fresh:
+            state = "stale"
+        elif covered:
+            state = "processing" if unprocessed else "failed"
+        else:
+            state = kind or "new"
         return {
-            "state": kind or "new",
-            "message": message,
-            "alert": kind in {"failed", "error", "processing"} or bool(failed),
+            "state": state,
+            "message": " ".join(parts),
+            "alert": state in {"failed", "error", "processing"} or bool(failed or unprocessed),
             "checked": f"{datetime.fromisoformat(checked):%d %b %Y, %H:%M}" if checked else None,
         }
 
